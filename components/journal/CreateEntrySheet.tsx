@@ -27,12 +27,12 @@ interface CreateEntrySheetProps {
   initialTags?: string[];
 }
 
-export function CreateEntrySheet({ 
-  visible, 
-  onDismiss, 
-  onSubmit, 
+export function CreateEntrySheet({
+  visible,
+  onDismiss,
+  onSubmit,
   autoSave = true,
-  prompts = [], 
+  prompts = [],
   entryType = 'on_demand',
   initialTags = []
 }: CreateEntrySheetProps) {
@@ -48,15 +48,16 @@ export function CreateEntrySheet({
   const [currentEntryType, setCurrentEntryType] = useState<JournalEntryType>(entryType);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
+  const [isUserEditingTitle, setIsUserEditingTitle] = useState(false);
   const theme = useTheme();
   const editorRef = useRef<RichTextEditorRef>(null);
-  
+
   // We'll use the SummaryNotes font in the text editor
-  
+
   // Auto-save draft to AsyncStorage every 10 seconds
   useEffect(() => {
     if (!autoSave || !isDirty) return;
-    
+
     const saveInterval = setInterval(async () => {
       if (isDirty) {
         try {
@@ -64,6 +65,7 @@ export function CreateEntrySheet({
           if (htmlContent.trim()) {
             const draftData = {
               content: htmlContent,
+              title,
               mood,
               tags,
               entry_type: currentEntryType,
@@ -76,17 +78,17 @@ export function CreateEntrySheet({
         }
       }
     }, 10000);
-    
+
     return () => clearInterval(saveInterval);
-  }, [isDirty, autoSave, mood, tags, currentEntryType, selectedPrompt]);
-  
+  }, [isDirty, autoSave, title, mood, tags, currentEntryType, selectedPrompt]);
+
   // Load draft when sheet becomes visible
   useEffect(() => {
-    if (visible && autoSave) {
+    if (visible && autoSave && !isUserEditingTitle) {
       loadDraft();
     }
-  }, [visible]);
-  
+  }, [visible, autoSave, isUserEditingTitle]);
+
   const loadDraft = async () => {
     try {
       const savedDraftJson = await AsyncStorage.getItem('journal_draft');
@@ -97,12 +99,17 @@ export function CreateEntrySheet({
           setTimeout(() => {
             editorRef.current?.setContentHTML(draftData.content || '');
           }, 300);
-          
+
           // Restore other draft data
           if (draftData.mood) setMood(draftData.mood);
           if (draftData.tags) setTags(draftData.tags);
           if (draftData.entry_type) setCurrentEntryType(draftData.entry_type);
-          
+
+          // Only restore title if user is not actively editing
+          if (draftData.title && !isUserEditingTitle) {
+            setTitle(draftData.title);
+          }
+
           // Find matching prompt if prompt_id exists
           if (draftData.prompt_id) {
             const prompt = prompts.find(p => p.id === draftData.prompt_id);
@@ -116,12 +123,12 @@ export function CreateEntrySheet({
       console.error('Error loading draft:', error);
     }
   };
-  
+
   const handleContentChange = (html: string) => {
     setContent(html);
     setIsDirty(true);
   };
-  
+
   const handleTitleChange = (text: string) => {
     // Ensure clean input and prevent unexpected behavior
     const cleanedText = text.replace(/\s+/g, ' ').trim();
@@ -135,30 +142,28 @@ export function CreateEntrySheet({
     const randomIndex = Math.floor(Math.random() * prompts.length);
     setSelectedPrompt(prompts[randomIndex]);
   };
-  
+
   const handleSubmit = async () => {
     try {
       setIsSubmitting(true);
       const htmlContent = await editorRef.current?.getContentHtml() || '';
-      
-      console.log('Submitting new entry with:', {
-        content: htmlContent,
-        title,
-        mood,
-        tags,
-        entry_type: currentEntryType,
-        prompt_id: selectedPrompt?.id
-      });
-      
+
+      // Ensure we're using the most up-to-date title
+      const finalTitle = title.trim();
+
       if (htmlContent.trim()) {
-        await onSubmit({
+        // Prepare the data for submission
+        const entryData = {
           content: htmlContent,
-          title,
+          title: finalTitle,
           mood,
           tags,
           entry_type: currentEntryType,
           prompt_id: selectedPrompt?.id
-        });
+        };
+        
+        // Submit the entry
+        await onSubmit(entryData);
 
         // Clear draft on successful submit
         try {
@@ -166,7 +171,9 @@ export function CreateEntrySheet({
         } catch (error) {
           console.error('Error clearing draft:', error);
         }
-        
+
+        // Reset editing state and dismiss
+        setIsUserEditingTitle(false);
         onDismiss();
       }
     } catch (error) {
@@ -175,7 +182,7 @@ export function CreateEntrySheet({
       setIsSubmitting(false);
     }
   };
-  
+
   // Helper to get emoji for mood
   const getMoodEmoji = (moodOption: Mood): string => {
     const emojiMap: Record<Mood, string> = {
@@ -189,8 +196,9 @@ export function CreateEntrySheet({
     return emojiMap[moodOption];
   };
 
+  // Track title changes if needed
   useEffect(() => {
-    console.log('Current title state:', title);
+    // Title state has changed
   }, [title]);
 
   // Show loading indicator if fonts are not loaded yet
@@ -211,31 +219,30 @@ export function CreateEntrySheet({
         {/* Header with white background */}
         <View style={styles.headerContainer}>
           <View style={styles.headerBackground}>
-            {/* Status bar spacing */}
-            <View style={styles.statusBarSpace} />
-            
-            {/* Stylized title display that looks like handwriting */}
-            <TextInput
-              style={[styles.logoText, { fontFamily: 'GreatVibes-Regular' }]}
-              placeholder="Entry Title"
-              placeholderTextColor="rgba(118, 64, 148, 0.5)"
-              value={title}
-              onChangeText={(text) => {
-                // Ensure clean input and prevent unexpected behavior
-                const cleanedText = text.replace(/\s+/g, ' ').trim();
-                setTitle(cleanedText);
-                setIsDirty(true);
-              }}
-              numberOfLines={2}
-              returnKeyType="done"
-              blurOnSubmit={true}
-              autoCorrect={false}
-              spellCheck={false}
-            />
-            
-            {/* Extra spacing */}
-            <View style={{height: 5}} />
-            {/* Decorative line under title */}
+            <View style={styles.titleContainer}>
+              <TextInput
+                style={styles.titleInput}
+                value={title}
+                onChangeText={(newTitle) => {
+                  setTitle(newTitle);
+                  setIsDirty(true);
+                }}
+                onFocus={() => {
+                  setIsUserEditingTitle(true);
+                }}
+                onBlur={() => {
+                  // Small delay to ensure any final changes are processed
+                  setTimeout(() => setIsUserEditingTitle(false), 100);
+                }}
+                placeholder="Entry Title"
+                placeholderTextColor="rgba(118, 64, 148, 0.5)"
+                multiline={false}
+                editable={true}
+                autoCapitalize="sentences"
+                clearButtonMode="while-editing"
+                selectTextOnFocus={true}
+              />
+            </View>
             <View style={styles.decorativeLine} />
           </View>
         </View>
@@ -264,7 +271,7 @@ export function CreateEntrySheet({
                 </Text>
               </View>
             </TouchableOpacity>
-            
+
             <TouchableOpacity
               style={[
                 styles.entryTypeButton,
@@ -292,7 +299,7 @@ export function CreateEntrySheet({
               </View>
             </TouchableOpacity>
           </View>
-          
+
           {/* Prompt Card */}
           {currentEntryType === 'daily_prompt' && (
             <Card style={styles.promptCard} mode="outlined">
@@ -300,9 +307,9 @@ export function CreateEntrySheet({
                 {selectedPrompt ? (
                   <>
                     <Text style={styles.promptText}>"{selectedPrompt.question}"</Text>
-                    <Button 
-                      mode="text" 
-                      icon="refresh" 
+                    <Button
+                      mode="text"
+                      icon="refresh"
                       onPress={selectRandomPrompt}
                       style={styles.promptButton}
                       textColor="#764094"
@@ -313,9 +320,9 @@ export function CreateEntrySheet({
                 ) : (
                   <>
                     <Text style={styles.promptPlaceholder}>Select a writing prompt to inspire your entry</Text>
-                    <Button 
-                      mode="text" 
-                      icon="lightbulb-outline" 
+                    <Button
+                      mode="text"
+                      icon="lightbulb-outline"
                       onPress={selectRandomPrompt}
                       style={styles.promptButton}
                       textColor="#764094"
@@ -327,7 +334,7 @@ export function CreateEntrySheet({
               </Card.Content>
             </Card>
           )}
-          
+
           {/* Text Editor */}
           <View style={styles.editorContainer}>
             <RichTextEditor
@@ -356,21 +363,21 @@ export function CreateEntrySheet({
               </TouchableOpacity>
             ))}
           </View>
-          
+
           <Divider style={styles.divider} />
-          
+
           {/* Tags Input with AI Suggestions */}
-          <TagsInput 
+          <TagsInput
             tags={tags}
             onTagsChange={setTags}
             content={content}
           />
-          
+
           <Divider style={styles.divider} />
-          
+
           {/* Submit Button */}
-          <Button 
-            mode="contained" 
+          <Button
+            mode="contained"
             onPress={handleSubmit}
             loading={isSubmitting}
             disabled={!content.trim() || isSubmitting}
@@ -408,7 +415,7 @@ const styles = StyleSheet.create({
   },
   headerBackground: {
     flex: 1,
-    padding: 16, 
+    padding: 16,
     justifyContent: 'flex-start',
     alignItems: 'center',
     backgroundColor: 'white',
@@ -416,23 +423,28 @@ const styles = StyleSheet.create({
   statusBarSpace: {
     height: 25, // Balanced to prevent cropping while not having too much space
   },
-  logoText: {
-    color: '#764094', // Purple title text
-    fontSize: 42,
-    fontFamily: 'GreatVibes-Regular',
-    alignSelf: 'center',
+  titleContainer: {
+    width: '100%',
+    padding: 15,
     marginTop: 10,
-    marginBottom: 10,
+  },
+  titleInput: {
+    fontSize: 36,
+    padding: 0,
+    fontFamily: 'GreatVibes-Regular',
+    color: '#764094',
+    backgroundColor: 'rgba(236, 232, 240, 0.5)',
+    borderRadius: 8,
     textAlign: 'center',
-    minHeight: 70,
-    maxHeight: 100,
-    width: '90%',
-    paddingHorizontal: 10,
-    paddingBottom: 5,
-    // Subtle text shadow for elegance
-    textShadowColor: 'rgba(118, 64, 148, 0.3)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
+    minHeight: 50,
+    ...Platform.select({
+      ios: {
+        paddingTop: 10, // Fix for iOS text alignment
+      },
+      android: {
+        textAlignVertical: 'center',
+      },
+    }),
   },
   decorativeLine: {
     width: '80%',

@@ -68,7 +68,7 @@ export function useJournal(): UseJournalReturn {
 
   const loadPrompts = async () => {
     if (!session?.user) return;
-    
+
     setPromptsLoading(true);
     try {
       const { data, error } = await supabase
@@ -88,7 +88,7 @@ export function useJournal(): UseJournalReturn {
 
   const loadInsights = async () => {
     if (!session?.user) return;
-    
+
     setInsightsLoading(true);
     try {
       const { data, error } = await supabase
@@ -109,7 +109,7 @@ export function useJournal(): UseJournalReturn {
 
   const generateInsight = useCallback(async (entryIds: string[]) => {
     if (!session?.user || entryIds.length === 0) return;
-    
+
     try {
       // Typically, this would call an API endpoint that processes entries with AI
       // For now, we'll simulate it with a placeholder
@@ -146,7 +146,7 @@ export function useJournal(): UseJournalReturn {
 
   const bookmarkInsight = useCallback(async (id: string, isBookmarked: boolean) => {
     if (!session?.user) return;
-    
+
     try {
       const { error } = await supabase
         .from('journal_insights')
@@ -167,14 +167,14 @@ export function useJournal(): UseJournalReturn {
     if (type === 'all') return entries;
     return entries.filter(entry => entry.entry_type === type);
   }, [entries]);
-  
+
   const addEntry = useCallback(async (data: CreateEntryData) => {
     if (!session?.user) return;
-    
+
     try {
       // Check if this would be a milestone entry (every 10th entry)
       const isMilestone = entries.length % 10 === 9; // This will make the new entry the 10th, 20th, etc.
-      
+
       const { error } = await supabase
         .from('journal_entries')
         .insert({
@@ -189,7 +189,7 @@ export function useJournal(): UseJournalReturn {
 
       // Reload entries to get the newly added one
       await loadEntries();
-      
+
       // If this is a milestone entry, generate an insight
       if (isMilestone) {
         // Get the last 10 entries (including the new one after reloading)
@@ -206,36 +206,84 @@ export function useJournal(): UseJournalReturn {
   }, [session?.user, entries.length, generateInsight]);
 
   const updateEntry = useCallback(async (id: string, data: Partial<CreateEntryData>) => {
-    if (!session?.user) return;
-    
+    if (!session?.user) {
+      console.error('No user session found');
+      throw new Error('You must be logged in to update entries');
+    }
+
     try {
-      const updateData: any = {
-        updated_at: new Date().toISOString()
+      console.log('Updating entry with ID:', id);
+      console.log('Update data received:', JSON.stringify(data, null, 2));
+
+      // Validate the entry exists before updating
+      const { data: existingEntry, error: fetchError } = await supabase
+        .from('journal_entries')
+        .select('*')
+        .eq('id', id)
+        .eq('user_id', session.user.id)
+        .single();
+
+      if (fetchError) {
+        console.error('Error fetching entry to update:', fetchError);
+        throw new Error('Could not find the journal entry to update');
+      }
+
+      if (!existingEntry) {
+        throw new Error('Journal entry not found');
+      }
+
+      // Process title field if present
+      if (data.title !== undefined) {
+        if (typeof data.title === 'string') {
+          data.title = data.title.trim();
+          console.log('Title being updated to:', data.title);
+        } else {
+          console.error('Invalid title format:', data.title);
+          throw new Error('Title must be a string');
+        }
+      }
+
+      // Process content field if present
+      if (data.content !== undefined && !data.content.trim()) {
+        console.error('Content cannot be empty');
+        throw new Error('Journal content cannot be empty');
+      }
+
+      // Create a clean update object with proper typing
+      const updateData: Record<string, any> = {
+        updated_at: new Date().toISOString(),
       };
-      
-      // Only include properties that are actually defined
+
+      // Only include fields that are explicitly provided
       if (data.content !== undefined) updateData.content = data.content;
       if (data.title !== undefined) updateData.title = data.title;
       if (data.mood !== undefined) updateData.mood = data.mood;
       if (data.tags !== undefined) updateData.tags = data.tags;
       if (data.entry_type !== undefined) updateData.entry_type = data.entry_type;
       if (data.prompt_id !== undefined) updateData.prompt_id = data.prompt_id;
-      
+
+      console.log('Final update payload:', JSON.stringify(updateData, null, 2));
+
+      // Perform the update
       const { error } = await supabase
         .from('journal_entries')
         .update(updateData)
         .eq('id', id)
         .eq('user_id', session.user.id);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase update error:', error);
+        throw new Error(`Failed to update journal entry: ${error.message}`);
+      }
 
+      console.log('Update successful, reloading entries');
       // Reload entries to get the updated one
       await loadEntries();
     } catch (error) {
       console.error('Error updating journal entry:', error);
       throw error;
     }
-  }, [session?.user]);
+  }, [session?.user, loadEntries]);
 
   const deleteEntry = useCallback(async (id: string) => {
     try {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, StyleSheet, TextInput, ScrollView, TouchableOpacity, Text, Platform } from 'react-native';
-import { useTheme, Button, Card, Chip, Divider } from 'react-native-paper';
+import { useTheme, Button, Card, Chip, Divider, ActivityIndicator } from 'react-native-paper';
+import { useFonts } from 'expo-font';
 // No longer need LinearGradient for the white header design
 import { BottomSheet } from '../common/BottomSheet';
 import { JournalEntry, Mood, JournalEntryType, JournalPrompt } from '../../types/journal';
@@ -24,19 +25,39 @@ interface EditEntrySheetProps {
 }
 
 export function EditEntrySheet({ visible, onDismiss, entry, onSubmit, onDelete, prompts = [] }: EditEntrySheetProps) {
+  // Load custom GreatVibes font
+  const [fontsLoaded] = useFonts({
+    'GreatVibes-Regular': require('../../assets/fonts/GreatVibes-Regular.ttf'),
+  });
+  
   const [content, setContent] = useState(entry.content);
   const [title, setTitle] = useState(entry.title || '');
-  
-  // Ensure title is always in sync with the entry prop
-  useEffect(() => {
-    setTitle(entry.title || '');
-  }, [entry.title]);
+  // Remove unnecessary isUserEditingTitle and initialTitle state variables
+  // which are causing race conditions and complexity
 
-  const handleTitleChange = (text: string) => {
-    // Trim any extra spaces and ensure clean input
-    const cleanedText = text.replace(/\s+/g, ' ').trim();
-    setTitle(cleanedText);
-  };
+  // When the sheet becomes visible, reset all states to match the entry
+  useEffect(() => {
+    if (visible) {
+      // Reset all state variables when the sheet becomes visible
+      setContent(entry.content);
+      // Ensure title is a string and trim it
+      const cleanTitle = (entry.title || '').trim();
+      setTitle(cleanTitle);
+      setMood(entry.mood);
+      setTags(entry.tags || []);
+      setEntryType(entry.entry_type || 'on_demand');
+      
+      // Handle prompt if needed
+      if (entry.prompt_id) {
+        const prompt = prompts.find(p => p.id === entry.prompt_id);
+        setSelectedPrompt(prompt || null);
+      } else {
+        setSelectedPrompt(null);
+      }
+    }
+  }, [visible, entry]);
+
+  // No need for title change tracking useEffect
 
   const [mood, setMood] = useState<Mood>(entry.mood);
   const [tags, setTags] = useState<string[]>(entry.tags || []);
@@ -46,36 +67,40 @@ export function EditEntrySheet({ visible, onDismiss, entry, onSubmit, onDelete, 
   const theme = useTheme();
   const editorRef = useRef<RichTextEditorRef>(null);
   
+  // Show loading indicator if fonts are not yet loaded
+  if (!fontsLoaded) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+      </View>
+    );
+  }
+
   // Common emotion tags for quick selection
   const commonTags = [
-    'happiness', 'sadness', 'anxiety', 'stress', 'gratitude', 
+    'happiness', 'sadness', 'anxiety', 'stress', 'gratitude',
     'growth', 'family', 'work', 'health', 'relationship'
   ];
-  
+
   // Find the prompt if this entry has one
   const [selectedPrompt, setSelectedPrompt] = useState<JournalPrompt | null>(
     entry.prompt_id ? prompts.find(p => p.id === entry.prompt_id) || null : null
   );
-  
-  // Set the content when the entry changes
+
+  // Update editor content when visible
   useEffect(() => {
     if (visible && editorRef.current) {
-      editorRef.current.setContentHTML(entry.content);
-      handleTitleChange(entry.title || '');
-      setMood(entry.mood);
-      setTags(entry.tags || []);
-      setEntryType(entry.entry_type || 'on_demand');
-      if (entry.prompt_id) {
-        const prompt = prompts.find(p => p.id === entry.prompt_id);
-        setSelectedPrompt(prompt || null);
-      }
+      // Update the editor content with a slight delay to ensure ref is ready
+      setTimeout(() => {
+        editorRef.current?.setContentHTML(entry.content);
+      }, 50);
     }
-  }, [visible, entry, prompts]);
+  }, [visible, entry.content]);
 
   const handleContentChange = (html: string) => {
     setContent(html);
   };
-  
+
   const handleAddTag = () => {
     if (newTag.trim() && !tags.includes(newTag.trim())) {
       setTags([...tags, newTag.trim()]);
@@ -94,7 +119,7 @@ export function EditEntrySheet({ visible, onDismiss, entry, onSubmit, onDelete, 
       handleRemoveTag(tag);
     }
   };
-  
+
   // Helper to get emoji for mood
   const getMoodEmoji = (moodOption: Mood): string => {
     const emojiMap: Record<Mood, string> = {
@@ -111,30 +136,41 @@ export function EditEntrySheet({ visible, onDismiss, entry, onSubmit, onDelete, 
   const handleSubmit = async () => {
     try {
       setIsSubmitting(true);
-      const htmlContent = await editorRef.current?.getContentHtml() || '';
       
-      console.log('Submitting entry with:', {
-        id: entry.id,
-        content: htmlContent,
-        title,
-        mood,
-        tags,
-        entry_type: entryType,
-        prompt_id: selectedPrompt?.id
-      });
-      
+      // Get content from editor
+      let htmlContent = '';
+      try {
+        htmlContent = await editorRef.current?.getContentHtml() || '';
+      } catch (editorError) {
+        console.error('Error getting editor content:', editorError);
+        // Fallback to content state if editor fails
+        htmlContent = content;
+      }
+
+      // Ensure we're using the most up-to-date title and it's properly trimmed
+      const finalTitle = (title || '').trim();
+
+      // Process the entry submission
+
       if (htmlContent.trim()) {
-        await onSubmit(entry.id, {
+        // Make a clone of the entry object and update the properties
+        const updatedEntry = {
           content: htmlContent,
-          title,
+          title: finalTitle, // Pass title explicitly
           mood,
           tags,
           entry_type: entryType,
           prompt_id: selectedPrompt?.id
-        });
+        };
+
+        // Submit the entry
+        await onSubmit(entry.id, updatedEntry);
+        onDismiss(); // Close the sheet after successful submission
       }
     } catch (error) {
+      // Keep the error logging for debugging
       console.error('Error updating entry:', error);
+      alert('Failed to update entry. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -146,30 +182,27 @@ export function EditEntrySheet({ visible, onDismiss, entry, onSubmit, onDelete, 
         {/* Header with title input */}
         <View style={styles.headerContainer}>
           <View style={styles.headerBackground}>
-            {/* Status bar spacing */}
-            <View style={styles.statusBarSpace} />
-            
-            {/* Stylized title display that looks like handwriting */}
-            <TextInput
-              style={[styles.logoText, { fontFamily: 'GreatVibes-Regular' }]}
-              placeholder="Your Title"
-              placeholderTextColor="rgba(118, 64, 148, 0.5)"
-              value={title}
-              onChangeText={(text) => {
-                // Ensure clean input and prevent unexpected behavior
-                const cleanedText = text.replace(/\s+/g, ' ').trim();
-                setTitle(cleanedText);
-              }}
-              numberOfLines={2}
-              returnKeyType="done"
-              blurOnSubmit={true}
-              autoCorrect={false}
-              spellCheck={false}
-            />
-            
-            {/* Extra spacing */}
-            <View style={{height: 5}} />
-            {/* Decorative line under title */}
+            <View style={styles.titleContainer}>
+              <TextInput
+                style={styles.titleInput}
+                value={title}
+                onChangeText={(newTitle) => {
+                  // Update title directly
+                  // Update title immediately without any conditions
+                  setTitle(newTitle);
+                }}
+                // Remove focus/blur handlers that were causing problems
+                placeholder="Entry Title"
+                placeholderTextColor="rgba(118, 64, 148, 0.5)"
+                multiline={false}
+                editable={true}
+                autoCapitalize="sentences"
+                clearButtonMode="while-editing"
+                selectTextOnFocus={false} // Don't auto-select text on focus
+                blurOnSubmit={true} // Blur the input when the user presses enter/return
+                returnKeyType="done" // Use 'done' as the return key label
+              />
+            </View>
             <View style={styles.decorativeLine} />
           </View>
         </View>
@@ -187,20 +220,20 @@ export function EditEntrySheet({ visible, onDismiss, entry, onSubmit, onDelete, 
             </Card.Content>
           </Card>
         )}
-        
+
         {/* Text Editor */}
         <View style={styles.editorContainer}>
           <RichTextEditor
             ref={editorRef}
             initialContent={entry.content || ''}
             onChange={handleContentChange}
-            placeholder={entryType === 'daily_prompt' 
-              ? "Reflect on the prompt..." 
+            placeholder={entryType === 'daily_prompt'
+              ? "Reflect on the prompt..."
               : "What's on your mind?"}
             minHeight={250}
           />
         </View>
-        
+
         {/* Mood Selection */}
         <Text style={styles.moodLabel}>How are you feeling?</Text>
         <View style={styles.moodButtonsContainer}>
@@ -218,21 +251,21 @@ export function EditEntrySheet({ visible, onDismiss, entry, onSubmit, onDelete, 
             </TouchableOpacity>
           ))}
         </View>
-        
+
         <Divider style={styles.divider} />
-        
+
         {/* Tags Input with AI Suggestions */}
-        <TagsInput 
+        <TagsInput
           tags={tags}
           onTagsChange={setTags}
           content={content}
         />
-        
+
         <Divider style={styles.divider} />
-        
+
         {/* Submit Button */}
-        <Button 
-          mode="contained" 
+        <Button
+          mode="contained"
           onPress={handleSubmit}
           loading={isSubmitting}
           disabled={isSubmitting}
@@ -241,10 +274,10 @@ export function EditEntrySheet({ visible, onDismiss, entry, onSubmit, onDelete, 
         >
           Update Entry
         </Button>
-        
+
         {onDelete && (
-          <Button 
-            mode="outlined" 
+          <Button
+            mode="outlined"
             onPress={onDelete}
             disabled={isSubmitting}
             style={[styles.button, styles.deleteButton]}
@@ -275,7 +308,7 @@ const styles = StyleSheet.create({
   },
   headerBackground: {
     flex: 1,
-    padding: 16, 
+    padding: 16,
     justifyContent: 'flex-start',
     alignItems: 'center',
     backgroundColor: 'white',
@@ -291,22 +324,30 @@ const styles = StyleSheet.create({
   statusBarSpace: {
     height: 25, // Balanced to prevent cropping while not having too much space
   },
-  logoText: {
-    color: '#764094',
-    fontSize: 42,
-    fontFamily: 'GreatVibes-Regular',
-    alignSelf: 'center',
+  titleContainer: {
+    width: '100%',
+    padding: 15,
     marginTop: 10,
-    marginBottom: 10,
+  },
+  titleInput: {
+    fontSize: 36,
+    padding: 0,
+    marginVertical: 4,
+    marginHorizontal: 12,
+    minHeight: 50,
+    color: '#764094',
+    fontFamily: 'GreatVibes-Regular',
+    backgroundColor: 'rgba(236, 232, 240, 0.5)',
+    borderRadius: 8,
     textAlign: 'center',
-    minHeight: 70,
-    maxHeight: 100,
-    width: '90%',
-    paddingHorizontal: 10,
-    paddingBottom: 5,
-    textShadowColor: 'rgba(118, 64, 148, 0.3)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
+    ...Platform.select({
+      ios: {
+        paddingTop: 10, // Fix for iOS text alignment
+      },
+      android: {
+        textAlignVertical: 'center',
+      },
+    }),
   },
   promptCard: {
     marginBottom: 16,
