@@ -1,0 +1,518 @@
+import { View, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Pressable, TextInput as RNTextInput, FlatList } from 'react-native';
+import { Text, Card, Button, ActivityIndicator, Divider, IconButton, TextInput, useTheme, Surface, Avatar, MD3Theme, Snackbar, Menu } from 'react-native-paper';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useCallback, useState, useRef, useEffect } from 'react';
+import { useJournal } from '../../../hooks/useJournal';
+import { JournalEntry } from '../../../types/journal';
+import { useJournalChat, ChatMessage } from '../../../hooks/useJournalChat';
+import { useSavedInsights } from '../../../hooks/useSavedInsights';
+import * as Haptics from 'expo-haptics';
+import { formatDistanceToNow } from 'date-fns';
+
+export default function Insights() {
+  const theme = useTheme();
+  const { entries } = useJournal();
+  const [isSelectingEntry, setIsSelectingEntry] = useState(false);
+  const styles = createStyles(theme);
+  const { 
+    messages, 
+    sendMessage, 
+    isLoading, 
+    selectedEntry, 
+    selectEntry,
+    clearChat 
+  } = useJournalChat();
+  const { saveInsight, savedInsights } = useSavedInsights();
+  
+  // Snackbar for user feedback
+  const [snackbarVisible, setSnackbarVisible] = useState(false);
+  const [snackbarMessage, setSnackbarMessage] = useState('');
+  
+  const [messageText, setMessageText] = useState('');
+  const [showEntrySelector, setShowEntrySelector] = useState(false);
+  const chatListRef = useRef<FlatList>(null);
+  
+  const handleSendMessage = useCallback(() => {
+    if (messageText.trim()) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      sendMessage(messageText);
+      setMessageText('');
+    }
+  }, [messageText, sendMessage]);
+  
+  const handleEntrySelect = useCallback((entry: JournalEntry) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    selectEntry(entry);
+    setShowEntrySelector(false);
+  }, [selectEntry]);
+  
+  const scrollToBottom = useCallback(() => {
+    if (chatListRef.current && messages.length > 0) {
+      chatListRef.current.scrollToEnd({ animated: true });
+    }
+  }, [messages.length]);
+  
+  // Scroll to bottom when new messages arrive
+  useEffect(() => {
+    const timer = setTimeout(scrollToBottom, 100);
+    return () => clearTimeout(timer);
+  }, [messages.length, scrollToBottom]);
+  
+  const getMoodEmoji = (mood: string): string => {
+    const emojis: Record<string, string> = {
+      happy: '😊',
+      sad: '😔',
+      neutral: '😐',
+      excited: '🤩',
+      anxious: '😰',
+      calm: '😌',
+    };
+    return emojis[mood] || '😐';
+  };
+
+  // Entry Selector component
+  const renderEntrySelector = () => {
+    if (!showEntrySelector) return null;
+
+    return (
+      <Surface style={styles.entrySelectorContainer}>
+        <View style={styles.entrySelectorHeader}>
+          <Text style={styles.entrySelectorTitle}>Select an entry to discuss</Text>
+          <IconButton 
+            icon="close" 
+            size={20} 
+            onPress={() => setShowEntrySelector(false)}
+          />
+        </View>
+        <FlatList
+          data={entries}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.entrySelectorList}
+          renderItem={({ item }) => (
+            <Pressable 
+              style={styles.entryItem} 
+              onPress={() => handleEntrySelect(item)}
+            >
+              <View style={styles.entryItemHeader}>
+                <Text style={styles.entryMoodEmoji}>{getMoodEmoji(item.mood)}</Text>
+                <Text style={styles.entryDate}>
+                  {formatDistanceToNow(new Date(item.created_at), { addSuffix: true })}
+                </Text>
+              </View>
+              <Text numberOfLines={2} style={styles.entryPreview}>
+                {item.content}
+              </Text>
+            </Pressable>
+          )}
+        />
+      </Surface>
+    );
+  };
+
+  // Show feedback snackbar
+  const showSnackbar = (message: string) => {
+    setSnackbarMessage(message);
+    setSnackbarVisible(true);
+  };
+  
+  // Handle bookmarking an AI message
+  const handleBookmarkMessage = useCallback(async (message: ChatMessage) => {
+    try {
+      if (message.sender !== 'ai') return;
+      
+      await saveInsight({
+        message: message.text,
+        source: 'ai',
+        entryId: selectedEntry?.id,
+        entryDate: selectedEntry ? new Date(selectedEntry.created_at).toLocaleDateString() : undefined,
+        tags: ['chat']
+      });
+      
+      // Provide haptic feedback
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      showSnackbar('Insight saved to your bookmarks');
+    } catch (error) {
+      console.error('Error bookmarking message:', error);
+      showSnackbar('Failed to bookmark insight');
+    }
+  }, [selectedEntry, saveInsight]);
+  
+  // Check if a message is already bookmarked
+  const isMessageBookmarked = useCallback((message: ChatMessage): boolean => {
+    if (message.sender !== 'ai') return false;
+    return savedInsights.some(insight => insight.message === message.text);
+  }, [savedInsights]);
+  
+  // Message item renderer
+  const renderMessage = ({ item }: { item: ChatMessage }) => {
+    const isAI = item.sender === 'ai';
+    const isBookmarked = isMessageBookmarked(item);
+    
+    return (
+      <View style={[styles.messageContainer, isAI ? styles.aiMessage : styles.userMessage]}>
+        {isAI && (
+          <Avatar.Icon 
+            size={36} 
+            icon="brain" 
+            style={styles.aiAvatar} 
+          />
+        )}
+        <View style={[styles.messageBubble, isAI ? styles.aiMessageBubble : styles.userMessageBubble]}>
+          <Text style={styles.messageText}>{item.text}</Text>
+          
+          {isAI && (
+            <View style={styles.messageActions}>
+              <IconButton
+                icon={isBookmarked ? "bookmark" : "bookmark-outline"}
+                size={18}
+                onPress={() => handleBookmarkMessage(item)}
+                iconColor={isBookmarked ? theme.colors.primary : theme.colors.onSurfaceVariant}
+                style={styles.bookmarkButton}
+              />
+            </View>
+          )}
+        </View>
+      </View>
+    );
+  };
+
+  // Empty state when no entries
+  if (entries.length === 0) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+        <StatusBar style="auto" />
+        
+        <View style={styles.header}>
+          <Text variant="headlineMedium" style={styles.title}>Journal AI Chat</Text>
+        </View>
+        
+        <View style={styles.emptyContainer}>
+          <MaterialCommunityIcons 
+            name="chat-question-outline" 
+            size={64} 
+            color={theme.colors.outline} 
+          />
+          <Text style={styles.emptyTitle}>No Journal Entries Yet</Text>
+          <Text style={styles.emptyText}>
+            Start journaling to have AI-powered conversations about your entries and receive personalized insights.
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      <StatusBar style="auto" />
+      
+      <View style={styles.header}>
+        <Text variant="headlineMedium" style={styles.title}>Journal AI Chat</Text>
+        
+        <View style={styles.headerActions}>
+          {selectedEntry && (
+            <Button 
+              mode="text" 
+              onPress={() => setShowEntrySelector(true)}
+              icon="notebook-edit" 
+              style={styles.switchButton}
+            >
+              Switch Entry
+            </Button>
+          )}
+        </View>
+      </View>
+
+      {!selectedEntry && !showEntrySelector ? (
+        <View style={styles.selectEntryPrompt}>
+          <Text style={styles.promptText}>Select a journal entry to start an AI conversation</Text>
+          <Button 
+            mode="contained" 
+            onPress={() => setShowEntrySelector(true)}
+            icon="notebook" 
+            style={styles.selectEntryButton}
+          >
+            Select Entry
+          </Button>
+        </View>
+      ) : (
+        <KeyboardAvoidingView
+          style={styles.chatContainer}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={80}
+        >
+          <FlatList
+            ref={chatListRef}
+            data={messages}
+            keyExtractor={(item) => item.id}
+            renderItem={renderMessage}
+            contentContainerStyle={styles.messagesList}
+            ListHeaderComponent={selectedEntry ? (
+              <Surface style={styles.selectedEntryCard}>
+                <View style={styles.selectedEntryHeader}>
+                  <Text style={styles.selectedEntryDate}>
+                    Entry from {new Date(selectedEntry.created_at).toLocaleDateString()}
+                  </Text>
+                  <Text style={styles.selectedEntryMood}>
+                    {getMoodEmoji(selectedEntry.mood)} {selectedEntry.mood}
+                  </Text>
+                </View>
+                <Text style={styles.selectedEntryContent} numberOfLines={3}>
+                  {selectedEntry.content}
+                </Text>
+              </Surface>
+            ) : null}
+          />
+          
+          <View style={styles.inputContainer}>
+            <TextInput
+              style={styles.input}
+              value={messageText}
+              onChangeText={setMessageText}
+              placeholder="Ask about this journal entry..."
+              returnKeyType="send"
+              onSubmitEditing={handleSendMessage}
+              multiline
+            />
+            <IconButton
+              icon="send"
+              size={24}
+              disabled={isLoading || !messageText.trim()}
+              onPress={handleSendMessage}
+              style={styles.sendButton}
+            />
+          </View>
+        </KeyboardAvoidingView>
+      )}
+      
+      {renderEntrySelector()}
+      
+      {/* Feedback Snackbar */}
+      <Snackbar
+        visible={snackbarVisible}
+        onDismiss={() => setSnackbarVisible(false)}
+        duration={3000}
+        style={styles.snackbar}
+      >
+        {snackbarMessage}
+      </Snackbar>
+    </SafeAreaView>
+  );
+}
+
+// Create styles with theme
+const createStyles = (theme: MD3Theme) => StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+  },
+  header: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  title: {
+    fontWeight: 'bold',
+    color: theme.colors.primary,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  switchButton: {
+    marginLeft: 8,
+  },
+  // Chat container
+  chatContainer: {
+    flex: 1,
+  },
+  messagesList: {
+    paddingHorizontal: 12,
+    paddingBottom: 16,
+  },
+  messageContainer: {
+    marginVertical: 4,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+  },
+  userMessage: {
+    justifyContent: 'flex-end',
+  },
+  aiMessage: {
+    justifyContent: 'flex-start',
+  },
+  messageBubble: {
+    maxWidth: '80%',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 20,
+  },
+  userMessageBubble: {
+    backgroundColor: theme.colors.primaryContainer,
+    borderBottomRightRadius: 4,
+  },
+  aiMessageBubble: {
+    backgroundColor: theme.colors.surfaceVariant,
+    borderBottomLeftRadius: 4,
+    marginLeft: 8,
+  },
+  aiAvatar: {
+    backgroundColor: theme.colors.primary,
+  },
+  messageText: {
+    fontSize: 16,
+    lineHeight: 22,
+    color: theme.colors.onSurface,
+  },
+  messageActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 4,
+  },
+  bookmarkButton: {
+    margin: 0,
+  },
+  // Input area
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 8,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.outlineVariant,
+    backgroundColor: theme.colors.surface,
+  },
+  input: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: theme.colors.outline,
+    borderRadius: 20,
+    padding: 10,
+    paddingRight: 40,
+    maxHeight: 120,
+    backgroundColor: theme.colors.background,
+  },
+  sendButton: {
+    position: 'absolute',
+    right: 8,
+    bottom: 0,
+  },
+  // Entry selector
+  entrySelectorContainer: {
+    position: 'absolute',
+    top: 80,
+    left: 16,
+    right: 16,
+    bottom: 80,
+    borderRadius: 12,
+    zIndex: 10,
+    elevation: 5,
+    backgroundColor: theme.colors.surface,
+  },
+  entrySelectorHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.outlineVariant,
+  },
+  entrySelectorTitle: {
+    fontSize: 18,
+    fontWeight: '500',
+    color: theme.colors.primary,
+  },
+  entrySelectorList: {
+    padding: 12,
+  },
+  entryItem: {
+    padding: 16,
+    backgroundColor: theme.colors.surfaceVariant,
+    borderRadius: 8,
+    marginVertical: 6,
+  },
+  entryItemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  entryMoodEmoji: {
+    fontSize: 20,
+  },
+  entryDate: {
+    fontSize: 12,
+    color: theme.colors.onSurfaceVariant,
+  },
+  entryPreview: {
+    color: theme.colors.onSurface,
+    fontSize: 14,
+  },
+  // Selected entry
+  selectedEntryCard: {
+    margin: 8,
+    padding: 16,
+    borderRadius: 8,
+    backgroundColor: theme.colors.surfaceVariant,
+  },
+  selectedEntryHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  selectedEntryDate: {
+    fontSize: 14,
+    color: theme.colors.onSurfaceVariant,
+  },
+  selectedEntryMood: {
+    fontSize: 14,
+    color: theme.colors.primary,
+  },
+  selectedEntryContent: {
+    fontSize: 14,
+    color: theme.colors.onSurfaceVariant,
+    fontStyle: 'italic',
+  },
+  // Empty state
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '500',
+    color: theme.colors.onSurface,
+    marginTop: 16,
+  },
+  emptyText: {
+    textAlign: 'center',
+    marginTop: 8,
+    color: theme.colors.onSurfaceVariant,
+  },
+  // Select entry prompt
+  selectEntryPrompt: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  promptText: {
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 20,
+    color: theme.colors.onSurfaceVariant,
+  },
+  selectEntryButton: {
+    marginTop: 8,
+  },
+  snackbar: {
+    bottom: 70,
+  },
+});

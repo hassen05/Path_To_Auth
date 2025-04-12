@@ -5,6 +5,22 @@
       "expo-router"
     ],
     "name": "path-to-authenticity",
-    "slug": "path-to-authenticity"
+    "slug": "path-to-authenticity",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "newArchEnabled": true
   }
 }
