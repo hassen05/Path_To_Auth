@@ -12,10 +12,22 @@ export type CreateEntryData = {
   prompt_id?: string;
 };
 
+export interface JournalSeries {
+  id: string;
+  user_id: string;
+  title: string;
+  description?: string;
+  created_at: string;
+  updated_at: string;
+  is_active: boolean;
+  cover_image?: string;
+}
+
 export interface UseJournalReturn {
   entries: JournalEntry[];
   prompts: JournalPrompt[];
   insights: AIInsight[];
+  series: JournalSeries[];
   addEntry: (data: CreateEntryData) => Promise<void>;
   updateEntry: (id: string, data: Partial<CreateEntryData>) => Promise<void>;
   deleteEntry: (id: string) => Promise<void>;
@@ -25,26 +37,37 @@ export interface UseJournalReturn {
   generateInsight: (entryIds: string[]) => Promise<void>;
   bookmarkInsight: (id: string, isBookmarked: boolean) => Promise<void>;
   filterEntriesByType: (type: JournalEntryType | 'all') => JournalEntry[];
+  // New methods for continuous journals
+  loadSeries: () => Promise<void>;
+  createSeries: (title: string, description?: string) => Promise<string>;  // Returns series_id
+  updateSeries: (id: string, data: Partial<JournalSeries>) => Promise<void>;
+  deleteSeries: (id: string) => Promise<void>;
+  getContinuousEntries: (seriesId: string) => JournalEntry[];
+  addContinuousEntry: (seriesId: string, data: Omit<CreateEntryData, 'series_id' | 'entry_type'>) => Promise<void>;
   loading: boolean;
   promptsLoading: boolean;
   insightsLoading: boolean;
+  seriesLoading: boolean;
 }
 
 export function useJournal(): UseJournalReturn {
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [prompts, setPrompts] = useState<JournalPrompt[]>([]);
   const [insights, setInsights] = useState<AIInsight[]>([]);
+  const [series, setSeries] = useState<JournalSeries[]>([]);
   const [loading, setLoading] = useState(false);
   const [promptsLoading, setPromptsLoading] = useState(false);
   const [insightsLoading, setInsightsLoading] = useState(false);
+  const [seriesLoading, setSeriesLoading] = useState(false);
   const { session } = useAuth();
 
-  // Load entries, prompts, and insights when component mounts
+  // Load entries, prompts, insights, and series when component mounts
   useEffect(() => {
     if (session?.user) {
       loadEntries();
       loadPrompts();
       loadInsights();
+      loadSeries();
     }
   }, [session?.user]);
 
@@ -303,10 +326,168 @@ export function useJournal(): UseJournalReturn {
     }
   }, [session?.user?.id]);
 
+  // Load journal series
+  const loadSeries = async () => {
+    if (!session?.user) return;
+
+    setSeriesLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('journal_series')
+        .select('*')
+        .eq('user_id', session.user.id)
+        .order('updated_at', { ascending: false });
+
+      if (error) throw error;
+
+      setSeries(data || []);
+    } catch (error) {
+      console.error('Error loading journal series:', error);
+    } finally {
+      setSeriesLoading(false);
+    }
+  };
+
+  // Create a new journal series
+  const createSeries = async (title: string, description?: string): Promise<string> => {
+    if (!session?.user) throw new Error('You must be logged in to create a journal series');
+
+    try {
+      const newSeries = {
+        user_id: session.user.id,
+        title,
+        description,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        is_active: true
+      };
+
+      const { data, error } = await supabase
+        .from('journal_series')
+        .insert(newSeries)
+        .select()
+        .single();
+
+      if (error) throw error;
+      
+      // Reload series to get the newly created one
+      await loadSeries();
+      
+      return data.id;
+    } catch (error) {
+      console.error('Error creating journal series:', error);
+      throw error;
+    }
+  };
+
+  // Update a journal series
+  const updateSeries = async (id: string, data: Partial<JournalSeries>) => {
+    if (!session?.user) return;
+
+    try {
+      const updateData: Record<string, any> = {
+        ...data,
+        updated_at: new Date().toISOString()
+      };
+
+      const { error } = await supabase
+        .from('journal_series')
+        .update(updateData)
+        .eq('id', id)
+        .eq('user_id', session.user.id);
+
+      if (error) throw error;
+
+      // Reload series to get the updated one
+      await loadSeries();
+    } catch (error) {
+      console.error('Error updating journal series:', error);
+      throw error;
+    }
+  };
+
+  // Delete a journal series and all its entries
+  const deleteSeries = async (id: string) => {
+    if (!session?.user) return;
+
+    try {
+      // First update all entries to remove the series_id (or we could delete them)
+      const { error: updateError } = await supabase
+        .from('journal_entries')
+        .update({ series_id: null })
+        .eq('series_id', id)
+        .eq('user_id', session.user.id);
+
+      if (updateError) throw updateError;
+
+      // Then delete the series
+      const { error } = await supabase
+        .from('journal_series')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', session.user.id);
+
+      if (error) throw error;
+
+      // Reload both entries and series
+      await loadEntries();
+      await loadSeries();
+    } catch (error) {
+      console.error('Error deleting journal series:', error);
+      throw error;
+    }
+  };
+
+  // Get all entries for a specific continuous journal series
+  const getContinuousEntries = useCallback((seriesId: string) => {
+    return entries.filter(entry => entry.series_id === seriesId)
+      .sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
+  }, [entries]);
+
+  // Add an entry to a continuous journal series
+  const addContinuousEntry = async (seriesId: string, data: Omit<CreateEntryData, 'series_id' | 'entry_type'>) => {
+    if (!session?.user) return;
+
+    try {
+      // Get the highest sequence number in this series
+      const seriesEntries = getContinuousEntries(seriesId);
+      const nextSequence = seriesEntries.length > 0 
+        ? (Math.max(...seriesEntries.map(entry => entry.sequence || 0)) + 1) 
+        : 1;
+
+      // Prepare the entry data
+      const entryData = {
+        ...data,
+        user_id: session.user.id,
+        series_id: seriesId,
+        entry_type: 'continuous' as JournalEntryType,
+        sequence: nextSequence,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase
+        .from('journal_entries')
+        .insert(entryData);
+
+      if (error) throw error;
+
+      // Update the series to reflect the latest update
+      await updateSeries(seriesId, { updated_at: new Date().toISOString() });
+
+      // Reload entries to get the newly added one
+      await loadEntries();
+    } catch (error) {
+      console.error('Error adding continuous journal entry:', error);
+      throw error;
+    }
+  };
+
   return {
     entries,
     prompts,
     insights,
+    series,
     addEntry,
     updateEntry,
     deleteEntry,
@@ -316,8 +497,16 @@ export function useJournal(): UseJournalReturn {
     generateInsight,
     bookmarkInsight,
     filterEntriesByType,
+    // New continuous journal methods
+    loadSeries,
+    createSeries,
+    updateSeries,
+    deleteSeries,
+    getContinuousEntries,
+    addContinuousEntry,
     loading,
     promptsLoading,
     insightsLoading,
+    seriesLoading,
   };
 }

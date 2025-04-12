@@ -1,6 +1,6 @@
 export type Mood = 'happy' | 'sad' | 'neutral' | 'excited' | 'anxious' | 'calm';
 
-export type JournalEntryType = 'daily_prompt' | 'on_demand';
+export type JournalEntryType = 'daily_prompt' | 'on_demand' | 'continuous';
 
 export interface JournalEntry {
   id: string;
@@ -14,6 +14,8 @@ export interface JournalEntry {
   created_at: string;
   updated_at: string;
   milestone?: boolean; // Indicates if this is a milestone entry (e.g., every 10th)
+  series_id?: string; // Optional reference to a continuous journal series
+  sequence?: number; // Optional sequence number within a continuous journal series
 }
 
 export interface CreateJournalEntry {
@@ -23,6 +25,8 @@ export interface CreateJournalEntry {
   tags?: string[];
   entry_type: JournalEntryType;
   prompt_id?: string;
+  series_id?: string; // For continuous journal entries
+  sequence?: number; // Position in continuous journal
 }
 
 export interface JournalPrompt {

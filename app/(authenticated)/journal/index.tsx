@@ -15,9 +15,11 @@ import {
   Chip,
   Card,
   IconButton,
+  Tooltip,
 } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
+import { useRouter } from 'expo-router';
 import { useJournal } from '../../../hooks/useJournal';
 import { JournalEntry, Mood, JournalEntryType } from '../../../types/journal';
 import { CreateEntrySheet } from '../../../components/journal/CreateEntrySheet';
@@ -29,6 +31,7 @@ import { format } from 'date-fns';
 
 export default function JournalScreen() {
   const theme = useTheme();
+  const router = useRouter();
 
   const [showCreateSheet, setShowCreateSheet] = useState(false);
   const [showEditSheet, setShowEditSheet] = useState(false);
@@ -158,11 +161,20 @@ export default function JournalScreen() {
       <StatusBar style="dark" />
       <View style={styles.header}>
         <Text style={styles.title}>Journal</Text>
-        <IconButton 
-          icon="cog-outline" 
-          size={24} 
-          onPress={() => {}}
-        />
+        <View style={styles.headerButtons}>
+          <Tooltip title="Continuous Journals">
+            <IconButton 
+              icon="book-open-variant" 
+              size={24} 
+              onPress={() => router.push('/(authenticated)/journal/series')}
+            />
+          </Tooltip>
+          <IconButton 
+            icon="cog-outline" 
+            size={24} 
+            onPress={() => {}}
+          />
+        </View>
       </View>
       <ScrollView 
         style={styles.container}
@@ -426,9 +438,12 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingBottom: 100, // Provide enough padding for the FAB
   },
-  header: {
+  headerButtons: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  header: {
+    flexDirection: 'row',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingTop: StatusBarHeight + 8,
@@ -439,20 +454,25 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#764094', // Purple theme
   },
-  section: {
-    marginBottom: 16,
-    paddingHorizontal: 16,
-  },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 12,
     marginTop: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  section: {
+    marginBottom: 16,
+    paddingHorizontal: 16,
   },
   tagFilterContainer: {
     marginBottom: 16,
