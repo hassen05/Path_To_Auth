@@ -153,6 +153,94 @@ My question/comment: ${userMessage}`,
     }
   }
 
+  static async generateReflectionQuestions(theme: string): Promise<string> {
+    const messages: Message[] = [
+      {
+        role: 'system',
+        content: `You are an insightful AI companion designed to guide users through meaningful self-reflection. 
+Your task is to generate 10 deep, thought-provoking questions about the theme of ${theme}.
+These questions should help users uncover insights about themselves related to this theme.
+
+After the user answers all 10 questions, you will take on the role of their 'higher self' to analyze their responses.
+You will identify negative patterns they should address and positive patterns they can embrace.
+You will also provide daily affirmations, actionable steps, and a message of encouragement.
+
+For now, only provide the first question. The app will handle asking one question at a time.`,
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `I want to reflect deeply on the theme of ${theme}. Please guide me through this process by asking 10 reflective questions one at a time. 
+After I answer the 10th question, please step into the role of my higher self and analyze my responses. 
+Identify negative patterns present in my life and positive patterns I can embrace and grow. 
+Be direct and truthful - tough love is welcome. 
+Provide daily affirmations to support my growth, actionable steps to change my behaviors, and a message of encouragement.`,
+          }
+        ]
+      }
+    ];
+
+    try {
+      const response = await this.makeRequest(messages);
+      return response.choices[0].message.content;
+    } catch (error) {
+      console.error('Failed to generate reflection questions:', error);
+      return 'I apologize, but I\'m having trouble generating reflection questions right now. Please try again later.';
+    }
+  }
+
+  static async continueReflectionDialog(
+    theme: string, 
+    previousQuestionsAndAnswers: {question: string, answer: string}[],
+    isLastQuestion: boolean = false
+  ): Promise<string> {
+    const messages: Message[] = [
+      {
+        role: 'system',
+        content: `You are an insightful AI companion designed to guide users through meaningful self-reflection on the theme of ${theme}.
+        
+You have already asked ${previousQuestionsAndAnswers.length} question(s), and the user has provided answers.
+
+${isLastQuestion 
+  ? `Since this is the 10th and final question, after receiving the user's answer, you will analyze all their responses.
+  Step into the role of their 'higher self' and provide:
+  1. Identification of negative patterns they should address
+  2. Positive patterns they can embrace and grow
+  3. Daily affirmations to support their growth
+  4. Actionable steps to change behaviors and embody their authentic self
+  5. A message of encouragement`
+  : `Please provide the next question in the sequence based on their previous answers. Make it thoughtful and relevant to their journey.`}`,
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `We're reflecting on the theme of ${theme}. Here's our conversation so far:
+
+${previousQuestionsAndAnswers.map((qa, index) => 
+  `Question ${index + 1}: ${qa.question}\nMy answer: ${qa.answer}`
+).join('\n\n')}
+
+${isLastQuestion 
+  ? 'This was the final question. Please analyze my responses as my higher self.' 
+  : 'Please ask the next reflective question.'}`,
+          }
+        ]
+      }
+    ];
+
+    try {
+      const response = await this.makeRequest(messages);
+      return response.choices[0].message.content;
+    } catch (error) {
+      console.error('Failed to continue reflection dialog:', error);
+      return 'I apologize, but I\'m having trouble with our reflection dialog right now. Please try again later.';
+    }
+  }
+
   // For demo purposes only - replace with real OCR service in production
   static async recognizeTextFromImage(base64Image: string): Promise<string> {
     console.log("Processing image for text recognition...");

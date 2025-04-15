@@ -1,444 +1,585 @@
-import React, { useState, useCallback, useMemo } from 'react';
-import { View, StyleSheet, FlatList, Pressable } from 'react-native';
+import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { View, StyleSheet, KeyboardAvoidingView, Platform, FlatList, Pressable, ImageStyle, TextStyle, ViewStyle } from 'react-native';
 import { 
-  Text, 
-  Card, 
-  Chip, 
   useTheme, 
+  Text, 
   Button, 
-  Divider, 
-  IconButton, 
-  Searchbar, 
-  SegmentedButtons, 
+  Card, 
+  FAB, 
+  Snackbar, 
   ActivityIndicator, 
   MD3Theme, 
-  FAB, 
-  Snackbar 
+  Surface, 
+  IconButton, 
+  TextInput, 
+  Menu
 } from 'react-native-paper';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { useJournal } from '../../../hooks/useJournal';
-import { AIInsight, JournalEntry } from '../../../types/journal';
-import { formatDistanceToNow, format } from 'date-fns';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
-import JournalChatView from '../../../components/journal/JournalChatView';
+import { formatDistanceToNow } from 'date-fns';
+import { useJournal } from '../../../hooks/useJournal';
+import { useJournalChat } from '../../../hooks/useJournalChat';
+import { useSavedInsights } from '../../../hooks/useSavedInsights';
+import { JournalEntry, Mood, AIInsight, ChatMessage, SavedInsight } from '../../../types/journal';
 
-type InsightViewMode = 'chat' | 'bookmarked';
+// Types and interfaces
+interface StylesType {
+  container: ViewStyle;
+  emptyContainer: ViewStyle;
+  emptyTitle: TextStyle;
+  emptyText: TextStyle;
+  header: ViewStyle;
+  title: TextStyle;
+  searchBar: ViewStyle;
+  segmentedButtons: ViewStyle;
+  card: ViewStyle;
+  cardTitle: TextStyle;
+  cardContent: TextStyle;
+  timestamp: TextStyle;
+  fab: ViewStyle;
+  loader: ViewStyle;
+  insightCard: ViewStyle;
+  insightContent: TextStyle;
+  patternContainer: ViewStyle;
+  sectionTitle: TextStyle;
+  patternText: TextStyle;
+  stepsContainer: ViewStyle;
+  stepItem: ViewStyle;
+  stepNumber: TextStyle;
+  stepText: TextStyle;
+  affirmationContainer: ViewStyle;
+  affirmationText: TextStyle;
+  listContent: ViewStyle;
+  snackbar: ViewStyle;
+  insightDate: TextStyle;
+  entrySelectorContainer: ViewStyle;
+  entrySelectorHeader: ViewStyle;
+  entrySelectorTitle: TextStyle;
+  entrySelectorList: ViewStyle;
+  entryItem: ViewStyle;
+  entryItemHeader: ViewStyle;
+  entryMoodEmoji: TextStyle;
+  entryDate: TextStyle;
+  entryContent: TextStyle;
+  messageContainer: ViewStyle;
+  aiMessage: ViewStyle;
+  userMessage: ViewStyle;
+  messageContent: ViewStyle;
+  messageText: TextStyle;
+  messageTimestamp: TextStyle;
+  chatContainer: ViewStyle;
+  messagesList: ViewStyle;
+  inputContainer: ViewStyle;
+  input: ViewStyle;
+  sendButton: ViewStyle;
+}
 
-export default function InsightsScreen() {
-  const theme = useTheme();
-  const styles = createStyles(theme);
-  const { entries, insights, bookmarkInsight, generateInsight, insightsLoading } = useJournal();
+// Get mood emoji
+const getMoodEmoji = (mood: Mood): string => {
+  const emojis: Record<Mood, string> = {
+    happy: '😊',
+    sad: '😔',
+    neutral: '😐',
+    excited: '🤩',
+    anxious: '😰',
+    calm: '😌',
+  };
+  return emojis[mood] || '😐';
+};
+
+// Custom hooks for styles
+function useStyles(): StylesType {
+  const theme = useTheme<MD3Theme>();
   
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    emptyContainer: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 24,
+    },
+    emptyTitle: {
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: theme.colors.onSurface,
+      marginBottom: 8,
+    },
+    emptyText: {
+      fontSize: 16,
+      color: theme.colors.onSurfaceVariant,
+      textAlign: 'center',
+    },
+    header: {
+      padding: 16,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    title: {
+      fontSize: 24,
+      fontWeight: 'bold',
+      color: theme.colors.onSurface,
+    },
+    searchBar: {
+      marginTop: 8,
+    },
+    segmentedButtons: {
+      marginTop: 8,
+    },
+    card: {
+      margin: 8,
+    },
+    cardTitle: {
+      fontSize: 16,
+      fontWeight: 'bold',
+      color: theme.colors.onSurface,
+    },
+    cardContent: {
+      color: theme.colors.onSurface,
+    },
+    timestamp: {
+      color: theme.colors.onSurfaceVariant,
+      marginTop: 8,
+    },
+    fab: {
+      position: 'absolute',
+      margin: 16,
+      right: 0,
+      bottom: 0,
+    },
+    loader: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    insightCard: {
+      marginVertical: 8,
+    },
+    insightContent: {
+      color: theme.colors.onSurface,
+    },
+    patternContainer: {
+      marginTop: 16,
+      padding: 16,
+      backgroundColor: theme.colors.surface,
+      borderRadius: 8,
+    },
+    sectionTitle: {
+      fontSize: 16,
+      fontWeight: 'bold',
+      color: theme.colors.onSurface,
+      marginBottom: 8,
+    },
+    patternText: {
+      color: theme.colors.onSurface,
+    },
+    stepsContainer: {
+      marginTop: 16,
+    },
+    stepItem: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      marginTop: 8,
+    },
+    stepNumber: {
+      fontSize: 16,
+      fontWeight: 'bold',
+      color: theme.colors.primary,
+      marginRight: 8,
+    },
+    stepText: {
+      color: theme.colors.onSurface,
+    },
+    affirmationContainer: {
+      marginTop: 16,
+      padding: 16,
+      backgroundColor: theme.colors.surface,
+      borderRadius: 8,
+    },
+    affirmationText: {
+      color: theme.colors.onSurface,
+      fontStyle: 'italic',
+    },
+    listContent: {
+      padding: 16,
+    },
+    snackbar: {
+      backgroundColor: theme.colors.surface,
+    },
+    insightDate: {
+      color: theme.colors.onSurfaceVariant,
+      marginTop: 8,
+    },
+    entrySelectorContainer: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: theme.colors.background,
+      padding: 16,
+    },
+    entrySelectorHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 16,
+    },
+    entrySelectorTitle: {
+      fontSize: 18,
+      fontWeight: 'bold',
+      color: theme.colors.onSurface,
+    },
+    entrySelectorList: {
+      padding: 16,
+    },
+    entryItem: {
+      padding: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.colors.outline,
+    },
+    entryItemHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 8,
+    },
+    entryMoodEmoji: {
+      fontSize: 24,
+    },
+    entryDate: {
+      fontSize: 14,
+      color: theme.colors.onSurfaceVariant,
+    },
+    entryContent: {
+      fontSize: 14,
+    },
+    messageContainer: {
+      padding: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.colors.outline,
+    },
+    aiMessage: {
+      backgroundColor: theme.colors.surface,
+      borderTopLeftRadius: 16,
+      borderBottomLeftRadius: 16,
+      borderBottomRightRadius: 16,
+    },
+    userMessage: {
+      backgroundColor: theme.colors.primary,
+      borderTopRightRadius: 16,
+      borderBottomLeftRadius: 16,
+      borderBottomRightRadius: 16,
+    },
+    messageContent: {
+      padding: 16,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+    },
+    messageText: {
+      fontSize: 14,
+      color: theme.colors.onSurface,
+    },
+    messageTimestamp: {
+      fontSize: 12,
+      color: theme.colors.onSurfaceVariant,
+      marginTop: 8,
+    },
+    chatContainer: {
+      flex: 1,
+      padding: 16,
+    },
+    messagesList: {
+      padding: 16,
+    },
+    inputContainer: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: 16,
+    },
+    input: {
+      flex: 1,
+      marginRight: 16,
+    },
+    sendButton: {
+      width: 80,
+    },
+  });
+}
+
+// Main InsightsScreen component
+export default function InsightsScreen() {
   // State management
-  const [viewMode, setViewMode] = useState<InsightViewMode>('chat');
-  const [selectedInsight, setSelectedInsight] = useState<AIInsight | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
-  const [isGeneratingInsight, setIsGeneratingInsight] = useState(false);
-  
-  // Filter insights based on search query (bookmarked only)
-  const filteredInsights = useMemo(() => {
-    // Start with bookmarked insights only
-    const filtered = insights.filter(insight => insight.is_bookmarked);
-    
-    // Apply search filter if query exists
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      return filtered.filter(insight => 
-        insight.content.toLowerCase().includes(query) || 
-        (insight.emotional_patterns && insight.emotional_patterns.toLowerCase().includes(query)) ||
-        (insight.actionable_steps && insight.actionable_steps.some(step => 
-          step.toLowerCase().includes(query)
-        )) ||
-        (insight.affirmation && insight.affirmation.toLowerCase().includes(query))
-      );
+  const [messageText, setMessageText] = useState('');
+  const [showEntrySelector, setShowEntrySelector] = useState(false);
+  const [menuVisible, setMenuVisible] = useState(false);
+  const chatListRef = useRef<FlatList>(null);
+
+  const { entries } = useJournal();
+  const { 
+    messages, 
+    sendMessage, 
+    isLoading, 
+    selectedEntry, 
+    selectEntry,
+    clearChat,
+    isAllEntriesMode,
+    conversationId,
+    isBookmarked,
+    bookmarkConversation
+  } = useJournalChat();
+  const { savedInsights } = useSavedInsights();
+  const styles = useStyles();
+
+  const scrollToBottom = useCallback(() => {
+    if (chatListRef.current && messages.length > 0) {
+      chatListRef.current.scrollToEnd({ animated: true });
     }
-    
-    return filtered;
-  }, [insights, searchQuery]);
-  
-  // Show snackbar message
-  const showSnackbar = useCallback((message: string) => {
-    setSnackbarMessage(message);
-    setSnackbarVisible(true);
-  }, []);
-  
-  // Handle bookmark toggle
-  const handleBookmarkToggle = useCallback(async (insight: AIInsight) => {
+  }, [messages.length]);
+
+  // Scroll to bottom when new messages arrive
+  useEffect(() => {
+    const timer = setTimeout(scrollToBottom, 100);
+    return () => clearTimeout(timer);
+  }, [messages.length, scrollToBottom]);
+
+  const handleEntrySelect = useCallback(async (entry: JournalEntry) => {
     try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      await bookmarkInsight(insight.id, !insight.is_bookmarked);
-      showSnackbar(
-        insight.is_bookmarked 
-          ? 'Removed from bookmarks' 
-          : 'Added to bookmarks'
-      );
-    } catch (error) {
-      console.error('Error toggling bookmark:', error);
-      showSnackbar('Failed to update bookmark');
-    }
-  }, [bookmarkInsight, showSnackbar]);
-  
-  // Generate a new insight from recent entries
-  const handleGenerateInsight = useCallback(async () => {
-    try {
-      setIsGeneratingInsight(true);
-      
-      // Get the last 10 entries
-      const recentEntries = entries.slice(0, 10);
-      if (recentEntries.length < 3) {
-        showSnackbar('Need at least 3 entries to generate an insight');
+      if (!entry || !entry.id) {
+        console.error('Invalid entry:', entry);
+        setSnackbarMessage('Invalid entry selected. Please try again.');
+        setSnackbarVisible(true);
         return;
       }
+
+      // Log the entry being selected for debugging
+      console.log('Selecting entry:', {
+        id: entry.id,
+        created_at: entry.created_at,
+        mood: entry.mood,
+        content: entry.content.substring(0, 20) + '...' // Log only first 20 chars
+      });
+
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      await selectEntry(entry);
       
-      const entryIds = recentEntries.map(entry => entry.id);
-      await generateInsight(entryIds);
-      showSnackbar('New insight generated');
+      // Give the user feedback that the entry was selected
+      setSnackbarMessage(`Selected entry: ${new Date(entry.created_at).toLocaleDateString()}`);
+      setSnackbarVisible(true);
       
-      // Vibrate on success
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setShowEntrySelector(false);
     } catch (error) {
-      console.error('Error generating insight:', error);
-      showSnackbar('Failed to generate insight');
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    } finally {
-      setIsGeneratingInsight(false);
+      console.error('Error selecting entry:', error);
+      setSnackbarMessage(error instanceof Error ? error.message : 'Failed to select entry. Please try again.');
+      setSnackbarVisible(true);
+      setShowEntrySelector(false);
     }
-  }, [entries, generateInsight, showSnackbar]);
-  
-  // Get related entries for an insight
-  const getRelatedEntries = useCallback((insight: AIInsight) => {
-    return entries.filter(entry => insight.entry_ids.includes(entry.id));
-  }, [entries]);
-  
-  // Render insight card
-  const renderInsightCard = useCallback(({ item }: { item: AIInsight }) => {
-    const relatedEntries = getRelatedEntries(item);
+  }, [selectEntry]);
+
+  const handleSendMessage = useCallback(() => {
+    if (!messageText.trim()) return;
+
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      sendMessage(messageText);
+      setMessageText('');
+    } catch (error) {
+      console.error('Error sending message:', error);
+      setSnackbarMessage(error instanceof Error ? error.message : 'Failed to send message. Please try again.');
+      setSnackbarVisible(true);
+    }
+  }, [messageText, sendMessage]);
+
+  const handleToggleBookmark = useCallback(async () => {
+    if (conversationId) {
+      await bookmarkConversation(conversationId, !isBookmarked);
+      setSnackbarMessage(isBookmarked ? 'Conversation unbookmarked' : 'Conversation bookmarked');
+      setSnackbarVisible(true);
+    }
+  }, [conversationId, isBookmarked, bookmarkConversation]);
+
+  const isMessageBookmarked = (message: ChatMessage): boolean => {
+    return savedInsights.some(insight => insight.id === message.id);
+  };
+
+  const renderEntrySelector = () => {
+    if (!showEntrySelector) return null;
+    
+    if (!entries?.length) {
+      return (
+        <Surface style={styles.entrySelectorContainer}>
+          <View style={styles.entrySelectorHeader}>
+            <Text style={styles.entrySelectorTitle}>No entries found</Text>
+            <IconButton 
+              icon="close" 
+              size={20} 
+              onPress={() => setShowEntrySelector(false)}
+            />
+          </View>
+          <Text style={styles.entryContent}>
+            Please create a journal entry first to discuss it.
+          </Text>
+        </Surface>
+      );
+    }
+
+    const theme = useTheme<MD3Theme>();
+
+    return (
+      <Surface style={styles.entrySelectorContainer}>
+        <View style={styles.entrySelectorHeader}>
+          <Text style={styles.entrySelectorTitle}>
+            {isAllEntriesMode 
+              ? 'Select an entry to focus on' 
+              : 'Select a different entry'}
+          </Text>
+          <IconButton 
+            icon="close" 
+            size={20} 
+            onPress={() => setShowEntrySelector(false)}
+          />
+        </View>
+        <FlatList
+          data={entries}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.entrySelectorList}
+          renderItem={({ item }) => (
+            <Pressable 
+              style={styles.entryItem} 
+              onPress={() => handleEntrySelect(item)}
+              android_ripple={{ color: theme.colors.onSurfaceVariant }}
+            >
+              <View style={styles.entryItemHeader}>
+                <Text style={styles.entryMoodEmoji}>{getMoodEmoji(item.mood)}</Text>
+                <Text style={styles.entryDate}>
+                  {formatDistanceToNow(new Date(item.created_at), { addSuffix: true })}
+                </Text>
+              </View>
+              <Text style={styles.entryContent}>{item.content}</Text>
+            </Pressable>
+          )}
+        />
+      </Surface>
+    );
+  };
+
+  const renderMessage = ({ item }: { item: ChatMessage }) => {
+    const isAI = item.sender === 'ai';
+    const isBookmarked = isMessageBookmarked(item);
     
     return (
-      <Card style={styles.insightCard} mode="outlined">
-        <Card.Content>
-          <Text style={styles.insightDate}>
-            {formatDistanceToNow(new Date(item.created_at), { addSuffix: true })}
+      <View style={[styles.messageContainer, isAI ? styles.aiMessage : styles.userMessage]}>
+        <View style={styles.messageContent}>
+          <Text style={styles.messageText}>{item.text}</Text>
+          <Text style={styles.messageTimestamp}>
+            {formatDistanceToNow(new Date(item.timestamp), { addSuffix: true })}
           </Text>
-          <Text style={styles.insightContent}>{item.content}</Text>
-          
-          {item.emotional_patterns && (
-            <View style={styles.patternContainer}>
-              <Text style={styles.sectionTitle}>Emotional Patterns</Text>
-              <Text style={styles.patternText}>{item.emotional_patterns}</Text>
-            </View>
+          {isBookmarked && (
+            <IconButton
+              icon="bookmark"
+              size={20}
+              onPress={() => handleToggleBookmark()}
+            />
           )}
-          
-          {item.actionable_steps && item.actionable_steps.length > 0 && (
-            <View style={styles.stepsContainer}>
-              <Text style={styles.sectionTitle}>Actionable Steps</Text>
-              {item.actionable_steps.map((step, index) => (
-                <View key={index} style={styles.stepItem}>
-                  <Text style={styles.stepNumber}>{index + 1}</Text>
-                  <Text style={styles.stepText}>{step}</Text>
-                </View>
-              ))}
-            </View>
-          )}
-          
-          {item.affirmation && (
-            <View style={styles.affirmationContainer}>
-              <Text style={styles.sectionTitle}>Affirmation</Text>
-              <Text style={styles.affirmationText}>"{item.affirmation}"</Text>
-            </View>
-          )}
-          
-          {relatedEntries.length > 0 && (
-            <View style={styles.relatedContainer}>
-              <Text style={styles.sectionTitle}>Based on</Text>
-              <FlatList
-                horizontal
-                data={relatedEntries}
-                keyExtractor={(entry) => entry.id}
-                renderItem={({ item: entry }) => (
-                  <Chip 
-                    style={styles.relatedChip}
-                    icon="calendar"
-                    mode="outlined"
-                  >
-                    {format(new Date(entry.created_at), 'MMM d')} • {entry.mood}
-                  </Chip>
-                )}
-                showsHorizontalScrollIndicator={false}
-              />
-            </View>
-          )}
-        </Card.Content>
-        
-        <Card.Actions>
-          <Button 
-            icon={item.is_bookmarked ? "bookmark" : "bookmark-outline"}
-            onPress={() => handleBookmarkToggle(item)}
-            mode="text"
-          >
-            {item.is_bookmarked ? "Bookmarked" : "Bookmark"}
-          </Button>
-        </Card.Actions>
-      </Card>
+        </View>
+      </View>
     );
-  }, [getRelatedEntries, handleBookmarkToggle, styles]);
-  
-  // Empty state for insights
-  const renderEmptyInsights = useCallback(() => (
-    <View style={styles.emptyContainer}>
-      <Text style={styles.emptyTitle}>No insights yet</Text>
-      <Text style={styles.emptyText}>
-        Generate AI insights based on your journal entries to discover patterns and get personalized reflections.
-      </Text>
-      <Button 
-        mode="contained" 
-        onPress={handleGenerateInsight}
-        loading={isGeneratingInsight}
-        disabled={isGeneratingInsight}
-        style={styles.generateButton}
-      >
-        Generate Insight
-      </Button>
-    </View>
-  ), [handleGenerateInsight, isGeneratingInsight, styles]);
-  
-  // Empty state for bookmarks
-  const renderEmptyBookmarks = useCallback(() => (
-    <View style={styles.emptyContainer}>
-      <Text style={styles.emptyTitle}>No bookmarked insights</Text>
-      <Text style={styles.emptyText}>
-        Generate insights and bookmark the valuable ones to reference them here.
-      </Text>
-      <Button 
-        mode="contained" 
-        onPress={handleGenerateInsight}
-        loading={isGeneratingInsight}
-        disabled={isGeneratingInsight || entries.length < 3}
-        style={styles.generateButton}
-      >
-        Generate New Insight
-      </Button>
-    </View>
-  ), [styles, handleGenerateInsight, isGeneratingInsight, entries.length]);
-  
+  };
+
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container}>
       <StatusBar style="auto" />
       
       <View style={styles.header}>
-        <Text style={styles.title}>Insights</Text>
-        <View style={styles.segmentedContainer}>
-          <SegmentedButtons
-            value={viewMode}
-            onValueChange={(value) => setViewMode(value as InsightViewMode)}
-            buttons={[
-              { value: 'chat', label: 'Chat' },
-              { value: 'bookmarked', label: 'Bookmarked' },
-            ]}
-          />
-        </View>
+        <Text style={styles.title}>AI Chat</Text>
+        {(conversationId && selectedEntry?.id) && (
+          <Menu
+            visible={menuVisible}
+            onDismiss={() => setMenuVisible(false)}
+            anchor={<IconButton icon={isBookmarked ? "bookmark" : "bookmark-outline"} onPress={() => setMenuVisible(true)} />}
+          >
+            <Menu.Item
+              leadingIcon={isBookmarked ? "bookmark-remove" : "bookmark-plus"}
+              onPress={handleToggleBookmark}
+              title={isBookmarked ? "Unbookmark Conversation" : "Bookmark Conversation"}
+            />
+            <Menu.Item
+              leadingIcon="delete"
+              onPress={() => {
+                clearChat();
+                setSnackbarMessage('Chat cleared');
+                setSnackbarVisible(true);
+              }}
+              title="Clear Chat"
+            />
+          </Menu>
+        )}
       </View>
-      
-      {viewMode !== 'chat' && (
-        <Searchbar
-          placeholder="Search insights..."
-          onChangeText={setSearchQuery}
-          value={searchQuery}
-          style={styles.searchbar}
-          mode="bar"
-        />
-      )}
-      
-      {viewMode === 'chat' ? (
-        // Chat view using dedicated component
-        <JournalChatView 
-          entries={entries} 
-          onShowSnackbar={showSnackbar}
-        />
-      ) : insightsLoading ? (
-        // Loading view
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-          <Text style={styles.loadingText}>Loading insights...</Text>
-        </View>
-      ) : filteredInsights.length > 0 ? (
-        // Insights list
+
+      {showEntrySelector && renderEntrySelector()}
+
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.chatContainer}
+      >
         <FlatList
-          data={filteredInsights}
-          renderItem={renderInsightCard}
+          ref={chatListRef}
+          data={messages}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
+          renderItem={renderMessage}
+          contentContainerStyle={styles.messagesList}
+          onContentSizeChange={scrollToBottom}
+          onLayout={scrollToBottom}
         />
-      ) : (
-        // Empty state for bookmarks
-        renderEmptyBookmarks()
-      )}
-      
-      {viewMode !== 'chat' && (
-        <FAB
-          icon="lightbulb"
-          style={styles.fab}
-          onPress={handleGenerateInsight}
-          loading={isGeneratingInsight}
-          disabled={isGeneratingInsight || entries.length < 3}
-        />
-      )}
-      
+
+        <View style={styles.inputContainer}>
+          <TextInput
+            mode="outlined"
+            value={messageText}
+            onChangeText={setMessageText}
+            placeholder="Type your message..."
+            onSubmitEditing={handleSendMessage}
+            style={styles.input}
+          />
+          <Button
+            mode="contained"
+            onPress={handleSendMessage}
+            disabled={!messageText.trim()}
+            style={styles.sendButton}
+          >
+            Send
+          </Button>
+        </View>
+      </KeyboardAvoidingView>
+
+      <FAB
+        icon={isAllEntriesMode ? "notebook" : "notebook-edit"}
+        onPress={() => {
+          if (isAllEntriesMode) {
+            setShowEntrySelector(true);
+          } else {
+            selectEntry(null);
+          }
+        }}
+        style={styles.fab}
+      />
+
       <Snackbar
         visible={snackbarVisible}
         onDismiss={() => setSnackbarVisible(false)}
         duration={3000}
-        style={styles.snackbar}
       >
         {snackbarMessage}
       </Snackbar>
     </SafeAreaView>
   );
 }
-
-const createStyles = (theme: MD3Theme) => StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  header: {
-    padding: 16,
-    flexDirection: 'column',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  title: {
-    fontWeight: 'bold',
-    color: theme.colors.onBackground,
-    fontSize: 28,
-    marginBottom: 16,
-  },
-  segmentedContainer: {
-    width: '100%',
-  },
-  searchbar: {
-    marginHorizontal: 16,
-    marginBottom: 8,
-  },
-  listContent: {
-    padding: 16,
-    paddingBottom: 80, // Space for FAB
-  },
-  insightCard: {
-    marginBottom: 16,
-    backgroundColor: theme.colors.surface,
-    borderColor: theme.colors.outlineVariant,
-  },
-  insightDate: {
-    fontSize: 14,
-    color: theme.colors.onSurfaceVariant,
-    marginBottom: 8,
-  },
-  insightContent: {
-    fontSize: 16,
-    color: theme.colors.onSurface,
-    marginBottom: 16,
-    lineHeight: 24,
-  },
-  patternContainer: {
-    marginBottom: 12,
-  },
-  sectionTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: theme.colors.primary,
-    marginBottom: 4,
-  },
-  patternText: {
-    fontSize: 14,
-    color: theme.colors.onSurfaceVariant,
-    fontStyle: 'italic',
-    lineHeight: 20,
-  },
-  stepsContainer: {
-    marginBottom: 12,
-  },
-  stepItem: {
-    flexDirection: 'row',
-    marginVertical: 4,
-    alignItems: 'flex-start',
-  },
-  stepNumber: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: theme.colors.primaryContainer,
-    color: theme.colors.onPrimaryContainer,
-    textAlign: 'center',
-    fontSize: 12,
-    lineHeight: 20,
-    marginRight: 8,
-    fontWeight: 'bold',
-  },
-  stepText: {
-    flex: 1,
-    fontSize: 14,
-    color: theme.colors.onSurface,
-    lineHeight: 20,
-  },
-  affirmationContainer: {
-    marginBottom: 12,
-  },
-  affirmationText: {
-    fontSize: 15,
-    fontStyle: 'italic',
-    color: theme.colors.onSurface,
-    lineHeight: 22,
-  },
-  relatedContainer: {
-    marginTop: 8,
-  },
-  relatedChip: {
-    marginRight: 8,
-    marginTop: 4,
-    backgroundColor: theme.colors.surfaceVariant,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 32,
-  },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: '500',
-    color: theme.colors.onSurface,
-    marginTop: 16,
-    textAlign: 'center',
-  },
-  emptyText: {
-    textAlign: 'center',
-    marginTop: 8,
-    marginBottom: 24,
-    color: theme.colors.onSurfaceVariant,
-  },
-  generateButton: {
-    marginTop: 16,
-  },
-  fab: {
-    position: 'absolute',
-    right: 16,
-    bottom: 16,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 16,
-    color: theme.colors.onSurfaceVariant,
-  },
-  snackbar: {
-    bottom: 70,
-  },
-});

@@ -49,6 +49,15 @@ export default function AuthenticatedLayout() {
         }}
       />
       <Tabs.Screen
+        name="reflections/index"
+        options={{
+          title: 'Reflect',
+          tabBarIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="lightbulb-outline" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="insights/index"
         options={{
           headerShown: false,

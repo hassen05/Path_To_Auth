@@ -169,32 +169,91 @@ export function useJournalChat(): UseJournalChatReturn {
     saveMessages();
   }, [messages, userId, conversationId, initializing]);
   
+  // Select a specific entry for chat
+  const selectEntry = useCallback(async (entry: JournalEntry) => {
+    try {
+      if (!userId) {
+        throw new Error('User not authenticated');
+      }
+
+      // Validate entry
+      if (!entry || !entry.id) {
+        throw new Error('Invalid entry selected');
+      }
+
+      // Clear existing messages
+      setMessages([]);
+      
+      // Set the selected entry and mode
+      setSelectedEntry(entry);
+      setIsAllEntriesMode(false);
+      
+      // Create or update conversation
+      const { data: conversationData, error: conversationError } = await supabase
+        .from('chat_conversations')
+        .upsert([
+          {
+            id: conversationId || crypto.randomUUID(),
+            user_id: userId,
+            entry_ids: [entry.id],
+            is_all_entries: false,
+            last_updated: new Date().toISOString()
+          }
+        ], {
+          onConflict: 'id'
+        });
+      
+      if (conversationError) {
+        console.error('Conversation error:', conversationError);
+        throw new Error('Failed to create conversation');
+      }
+      
+      // Update conversation ID
+      setConversationId(conversationData?.[0]?.id || null);
+      
+      // Load any existing messages for this conversation
+      if (conversationData?.[0]?.id) {
+        const { data: messagesData, error: messagesError } = await supabase
+          .from('chat_messages')
+          .select('*')
+          .eq('conversation_id', conversationData[0].id)
+          .order('timestamp', { ascending: true });
+        
+        if (messagesError) {
+          console.error('Messages error:', messagesError);
+          throw new Error('Failed to load messages');
+        }
+        
+        if (messagesData) {
+          setMessages(messagesData);
+        }
+      }
+    } catch (error) {
+      console.error('Error selecting entry:', error);
+      setSelectedEntry(null);
+      throw error;
+    }
+  }, [userId, conversationId]);
+
   // Generate AI response based on context (single entry or all entries)
   const generateAIResponse = async (userMessage: string): Promise<string> => {
     try {
       if (isAllEntriesMode) {
-        // Use the cached entries from the useJournal hook instead of fetching again
+        // Use the cached entries from the useJournal hook
         const entriesData = latestEntriesRef.current;
         
-        if (entriesData && entriesData.length > 0) {
-          // Create a summary of the entries for the AI
-          const entriesSummary = entriesData.map(entry => (
-            `Date: ${new Date(entry.created_at).toLocaleDateString()}, Mood: ${entry.mood}\nContent: ${entry.content.substring(0, 200)}${entry.content.length > 200 ? '...' : ''}`
-          )).join('\n\n---\n\n');
-          
-          // Use the AI service to generate a response for all entries
-          return await AIService.chatWithAllJournals(entriesSummary, userMessage);
-        } else {
+        if (!entriesData || entriesData.length === 0) {
           return "I don't see any journal entries to analyze. Try adding some entries first.";
         }
+
+        // Create a summary of the entries for the AI
+        const entriesSummary = entriesData.map(entry => (
+          `Date: ${new Date(entry.created_at).toLocaleDateString()}, Mood: ${entry.mood}\nContent: ${entry.content.substring(0, 200)}${entry.content.length > 200 ? '...' : ''}`
+        )).join('\n\n---\n\n');
+        
+        // Use the AI service to generate a response for all entries
+        return await AIService.chatWithAllJournals(entriesSummary, userMessage);
       } else if (selectedEntry) {
-        // Before using selectedEntry, verify it still exists in the current entries
-        const entryExists = latestEntriesRef.current.some(entry => entry.id === selectedEntry.id);
-        
-        if (!entryExists) {
-          return "It seems this journal entry has been deleted. Please select another entry or switch to discussing all entries.";
-        }
-        
         // Create context for single entry
         const entryContext = `Journal Entry Date: ${new Date(selectedEntry.created_at).toLocaleDateString()}\nMood: ${selectedEntry.mood}\nTags: ${selectedEntry.tags?.join(', ') || 'None'}\nContent: ${selectedEntry.content}`;
         
@@ -285,76 +344,6 @@ export function useJournalChat(): UseJournalChatReturn {
     setMessages([initialMessage]);
     return data.id;
   };
-  
-  // Select a specific entry for chat
-  const selectEntry = useCallback(async (entry: JournalEntry) => {
-    if (!userId) return;
-    setIsLoading(true);
-    
-    try {
-      // Verify the entry still exists in our latest entries
-      const entryExists = latestEntriesRef.current.some(e => e.id === entry.id);
-      if (!entryExists) {
-        throw new Error('This journal entry no longer exists');
-      }
-      
-      setSelectedEntry(entry);
-      setIsAllEntriesMode(false);
-      
-      // First check if there's an existing conversation for this entry
-      const { data: existingConversations, error: queryError } = await supabase
-        .from('chat_conversations')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('is_all_entries', false)
-        .contains('entry_ids', [entry.id])
-        .order('last_updated', { ascending: false })
-        .limit(1);
-      
-      if (queryError) throw queryError;
-      
-      // If we found an existing conversation, use it
-      if (existingConversations && existingConversations.length > 0) {
-        const conversation = existingConversations[0];
-        setConversationId(conversation.id);
-        // Handle different message formats
-        if (Array.isArray(conversation.messages)) {
-          setMessages(conversation.messages);
-        } else if (typeof conversation.messages === 'string') {
-          try {
-            const parsedMessages = JSON.parse(conversation.messages);
-            setMessages(Array.isArray(parsedMessages) ? parsedMessages : []);
-          } catch (parseError) {
-            console.error('Error parsing messages:', parseError);
-            setMessages([]);
-          }
-        } else {
-          console.warn('Messages in unexpected format:', typeof conversation.messages);
-          setMessages([]);
-        }
-        console.log('Loaded existing conversation for entry:', conversation.id);
-      } else {
-        // Otherwise create a new conversation in the database
-        const newConversationId = await createNewConversation([entry.id], false);
-        setConversationId(newConversationId);
-        console.log('Created new conversation for entry:', newConversationId);
-      }
-    } catch (error) {
-      console.error('Error selecting entry:', error);
-      
-      // Fallback message if database operation fails
-      const fallbackMessage: ChatMessage = {
-        id: Date.now().toString(),
-        text: `I've analyzed your journal entry from ${new Date(entry.created_at).toLocaleDateString()}. You were feeling ${entry.mood}. What would you like to discuss about this entry?`,
-        sender: 'ai',
-        timestamp: new Date().toISOString(),
-      };
-      
-      setMessages([fallbackMessage]);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [userId, createNewConversation]);
   
   // Select all entries mode for chat
   const selectAllEntries = useCallback(async () => {

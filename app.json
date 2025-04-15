@@ -2,7 +2,8 @@
   "expo": {
     "scheme": "acme",
     "plugins": [
-      "expo-router"
+      "expo-router",
+      ["react-native-reanimated/plugin", {"relativeSourceLocation": true}]
     ],
     "name": "path-to-authenticity",
     "slug": "path-to-authenticity",

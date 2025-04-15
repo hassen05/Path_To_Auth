@@ -47,3 +47,56 @@ export interface AIInsight {
   created_at: string;
   is_bookmarked?: boolean;
 }
+
+export interface ChatMessage {
+  id: string;
+  text: string;
+  sender: 'user' | 'ai';
+  timestamp: string;
+  conversation_id: string;
+}
+
+export interface SavedInsight {
+  id: string;
+  user_id: string;
+  conversation_id: string;
+  title: string;
+  created_at: string;
+  is_bookmarked: boolean;
+}
+
+export interface ReflectionTheme {
+  id: string;
+  name: string;
+  description: string;
+  icon?: string; // Optional icon name for the theme
+  order?: number; // Optional ordering for the theme list
+}
+
+export interface ReflectionQuestion {
+  id: string;
+  question: string;
+  answer?: string;
+  theme_id: string;
+  order: number; // Position in the question sequence (1-10)
+  created_at: string;
+}
+
+export interface ReflectionSession {
+  id: string;
+  user_id: string;
+  theme_id: string;
+  theme_name: string;
+  questions: ReflectionQuestion[];
+  current_question_index: number;
+  status: 'in_progress' | 'completed';
+  started_at: string;
+  completed_at?: string;
+  analysis?: {
+    negative_patterns: string[];
+    positive_patterns: string[];
+    affirmations: string[];
+    actionable_steps: string[];
+    encouragement: string;
+  };
+}

@@ -1,84 +1,96 @@
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, RefreshControl, Pressable } from 'react-native';
-import {
-  Text,
-  Button,
-  useTheme,
-  ActivityIndicator,
-  Surface,
-  TouchableRipple,
-  Avatar,
-  Divider,
-  FAB,
-  Portal,
-  Snackbar,
-  Chip,
-  Card,
-  IconButton,
-  Tooltip,
-} from 'react-native-paper';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, StyleSheet, FlatList, ListRenderItem, RefreshControl, Image, Dimensions } from 'react-native';
+import { Text, useTheme, Portal, Snackbar } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { format } from 'date-fns';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
+  FadeIn,
+  FadeOut,
+  SlideInRight,
+} from 'react-native-reanimated';
+
 import { useJournal } from '../../../hooks/useJournal';
-import { JournalEntry, Mood, JournalEntryType } from '../../../types/journal';
+import { JournalEntry, Mood } from '../../../types/journal';
+import Button from '../../../components/ui/Button';
+import Card from '../../../components/ui/Card';
 import { CreateEntrySheet } from '../../../components/journal/CreateEntrySheet';
 import { EditEntrySheet } from '../../../components/journal/EditEntrySheet';
 import { MoodPicker } from '../../../components/journal/MoodPicker';
 import { PhysicalJournalCapture } from '../../../components/journal/PhysicalJournalCapture';
-import { StatusBarHeight } from '../../../utils/dimensions';
-import { format } from 'date-fns';
 
-export default function JournalScreen() {
+const { width } = Dimensions.get('window');
+const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);
+
+function JournalScreen() {
   const theme = useTheme();
   const router = useRouter();
-
+  const { entries, loading, loadEntries, addEntry, updateEntry, deleteEntry } = useJournal();
+  
+  // State variables
   const [showCreateSheet, setShowCreateSheet] = useState(false);
   const [showEditSheet, setShowEditSheet] = useState(false);
-  const [showPhysicalCapture, setShowPhysicalCapture] = useState(false);
   const [selectedEntry, setSelectedEntry] = useState<JournalEntry | null>(null);
-  const [showMoodPicker, setShowMoodPicker] = useState(false);
   const [currentMood, setCurrentMood] = useState<Mood>('neutral');
-  const [fabOpen, setFabOpen] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
+  const [showMoodPicker, setShowMoodPicker] = useState(false);
+  const [showPhysicalCapture, setShowPhysicalCapture] = useState(false);
   const [showSnackbar, setShowSnackbar] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
-  const [todayPrompt, setTodayPrompt] = useState("What brings you joy and fulfillment today?");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [showAllTags, setShowAllTags] = useState(false);
+  const [filteredEntries, setFilteredEntries] = useState<JournalEntry[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [todayPrompt, setTodayPrompt] = useState("What brings you joy and fulfillment today?");
+  const [activeTab, setActiveTab] = useState<'entries' | 'insights' | 'prompts'>('entries');
   
-  const { entries, addEntry, updateEntry, deleteEntry, loadEntries, loading } = useJournal();
+  // Animation values
+  const fabSize = useSharedValue(56);
+  const fabScale = useSharedValue(1);
+  const headerHeight = useSharedValue(200);
   
-  // Array of weekdays for mood timeline
-  const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Today'];
-  
-  // Get moods for the past week
-  const weekdayMoods = weekdays.map((day, index) => {
-    // For demo, we'll hardcode Wed as having entries
-    if (day === 'Wed') {
-      return { day, mood: 'happy' as Mood, hasEntries: true };
-    }
-    return { day, mood: 'neutral' as Mood, hasEntries: false };
-  });
-
-  // Extract unique tags from all entries for filtering
-  const allTags = React.useMemo(() => {
-    const tagSet = new Set<string>();
-    entries.forEach(entry => {
-      entry.tags?.forEach(tag => tagSet.add(tag));
-    });
-    return Array.from(tagSet).sort();
-  }, [entries]);
-  
-  // Filter entries by selected tags if any
-  const filteredEntries = React.useMemo(() => {
-    if (selectedTags.length === 0) return entries;
+  // Load entries when component mounts
+  useEffect(() => {
+    loadEntries();
     
-    return entries.filter(entry => 
-      selectedTags.some(tag => entry.tags?.includes(tag))
-    );
+    // Animation for header entrance
+    headerHeight.value = withSpring(200, { damping: 20, stiffness: 90 });
+  }, []);
+  
+  // Update filtered entries when entries or selected tags change
+  useEffect(() => {
+    if (selectedTags.length === 0) {
+      setFilteredEntries(entries);
+    } else {
+      const filtered = entries.filter(entry => 
+        selectedTags.some(tag => entry.tags?.includes(tag))
+      );
+      setFilteredEntries(filtered);
+    }
   }, [entries, selectedTags]);
-
+  
+  // Animated styles
+  const headerAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      height: headerHeight.value,
+    };
+  });
+  
+  const fabAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      width: fabSize.value,
+      height: fabSize.value,
+      borderRadius: fabSize.value / 2,
+      transform: [{ scale: fabScale.value }],
+    };
+  });
+  
+  // Handler functions
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
@@ -90,19 +102,13 @@ export default function JournalScreen() {
       setRefreshing(false);
     }
   };
-
+  
   const showMessage = (message: string) => {
     setSnackbarMessage(message);
     setShowSnackbar(true);
   };
-
-  const handleCreateEntry = async (data: {
-    content: string;
-    mood: Mood;
-    tags: string[];
-    entry_type: JournalEntryType;
-    prompt_id?: string;
-  }) => {
+  
+  const handleCreateEntry = async (data) => {
     try {
       await addEntry(data);
       setShowCreateSheet(false);
@@ -112,15 +118,8 @@ export default function JournalScreen() {
       showMessage('Could not save entry');
     }
   };
-
-  const handleUpdateEntry = async (id: string, data: {
-    content: string;
-    title?: string;
-    mood: Mood;
-    tags: string[];
-    entry_type: JournalEntryType;
-    prompt_id?: string;
-  }) => {
+  
+  const handleUpdateEntry = async (id: string, data) => {
     try {
       await updateEntry(id, data);
       setShowEditSheet(false);
@@ -131,7 +130,7 @@ export default function JournalScreen() {
       showMessage('Could not update entry');
     }
   };
-
+  
   const handleDeleteEntry = async (id: string) => {
     try {
       await deleteEntry(id);
@@ -143,7 +142,32 @@ export default function JournalScreen() {
       showMessage('Could not delete entry');
     }
   };
-
+  
+  const handleFabPress = () => {
+    fabScale.value = withTiming(1.1, { duration: 100 }, () => {
+      fabScale.value = withTiming(1, { duration: 100 });
+    });
+    setCurrentMood('neutral');
+    setShowCreateSheet(true);
+  };
+  
+  const handleEntryPress = (entry: JournalEntry) => {
+    setSelectedEntry(entry);
+    setShowEditSheet(true);
+  };
+  
+  const getMoodColor = (mood: Mood): string => {
+    const moodColors = {
+      'happy': '#FFD166',
+      'sad': '#70D6FF',
+      'anxious': '#FF6B6B',
+      'neutral': '#9381FF',
+      'excited': '#FF70A6',
+      'calm': '#33CA7F'
+    };
+    return moodColors[mood] || '#9381FF';
+  };
+  
   const renderMoodEmoji = (mood: Mood) => {
     const emojiMap: Record<Mood, string> = {
       'happy': '😊',
@@ -155,271 +179,250 @@ export default function JournalScreen() {
     };
     return <Text style={styles.moodEmoji}>{emojiMap[mood]}</Text>;
   };
-
-  return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <StatusBar style="dark" />
-      <View style={styles.header}>
-        <Text style={styles.title}>Journal</Text>
-        <View style={styles.headerButtons}>
-          <Tooltip title="Continuous Journals">
-            <IconButton 
-              icon="book-open-variant" 
-              size={24} 
-              onPress={() => router.push('/(authenticated)/journal/series')}
+  
+  const formatEntryDate = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const isToday = date.toDateString() === now.toDateString();
+    
+    if (isToday) {
+      return `Today at ${format(date, 'h:mm a')}`;
+    } else {
+      return format(date, 'MMM d, yyyy');
+    }
+  };
+  
+  // Render item for FlatList
+  const renderJournalEntry: ListRenderItem<JournalEntry> = useCallback(({ item, index }) => {
+    const hasImage = index % 3 === 0; // Just for demo, in real app check if entry has images
+    
+    return (
+      <Animated.View 
+        entering={SlideInRight.delay(index * 50).springify()}
+        style={styles.entryContainer}
+      >
+        <Card
+          elevation={2}
+          onPress={() => handleEntryPress(item)}
+          style={styles.entryCard}
+        >
+          <View style={styles.entryHeader}>
+            <View style={styles.entryMoodContainer}>
+              <View 
+                style={[styles.moodIndicator, { backgroundColor: getMoodColor(item.mood) }]} 
+              />
+              <Text style={styles.entryDate}>{formatEntryDate(item.created_at)}</Text>
+            </View>
+            <MaterialCommunityIcons 
+              name="dots-horizontal" 
+              size={20} 
+              color="#777" 
             />
-          </Tooltip>
-          <IconButton 
-            icon="cog-outline" 
-            size={24} 
-            onPress={() => {}}
+          </View>
+          
+          {item.title && <Text style={styles.entryTitle}>{item.title}</Text>}
+          
+          <Text 
+            style={styles.entryContent} 
+            numberOfLines={hasImage ? 3 : 6}
+          >
+            {item.content}
+          </Text>
+          
+          {hasImage && (
+            <LinearGradient
+              colors={['#f2994a', '#f2c94c']}
+              style={styles.entryImage}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+            >
+              <MaterialCommunityIcons name="image-outline" size={24} color="white" style={styles.placeholderIcon} />
+            </LinearGradient>
+          )}
+          
+          {item.tags && item.tags.length > 0 && (
+            <View style={styles.tagsContainer}>
+              {item.tags.slice(0, 3).map((tag, idx) => (
+                <View key={idx} style={styles.tagChip}>
+                  <Text style={styles.tagText}>#{tag}</Text>
+                </View>
+              ))}
+              {item.tags.length > 3 && (
+                <Text style={styles.moreTagsText}>+{item.tags.length - 3}</Text>
+              )}
+            </View>
+          )}
+        </Card>
+      </Animated.View>
+    );
+  }, []);
+  
+  const EmptyList = () => (
+    <View style={styles.emptyContainer}>
+      <View style={styles.emptyImageContainer}>
+        <LinearGradient
+          colors={['#8a2387', '#e94057', '#f27121']}
+          style={styles.emptyImageGradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+        >
+          <MaterialCommunityIcons name="notebook-outline" size={64} color="white" />
+        </LinearGradient>
+      </View>
+      <Text style={styles.emptyTitle}>Your Journal is Empty</Text>
+      <Text style={styles.emptyText}>
+        Start your journey of self-discovery by writing your first entry.
+      </Text>
+      <Button 
+        title="Create First Entry"
+        variant="gradient"
+        gradientColors={['#4568dc', '#b06ab3']}
+        onPress={() => setShowCreateSheet(true)}
+        style={styles.emptyButton}
+        icon={<MaterialCommunityIcons name="pencil" size={20} color="white" />}
+      />
+    </View>
+  );
+  
+  const renderHeader = () => (
+    <Animated.View style={[styles.headerContainer, headerAnimatedStyle]}>
+      <LinearGradient
+        colors={['#4568dc', '#b06ab3']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.headerGradient}
+      >
+        <View style={styles.headerContent}>
+          <View style={styles.headerTopRow}>
+            <Text style={styles.headerTitle}>Journal</Text>
+            <MaterialCommunityIcons 
+              name="magnify" 
+              size={24} 
+              color="white" 
+              onPress={() => {}}
+            />
+          </View>
+          
+          <Text style={styles.headerPrompt}>"{todayPrompt}"</Text>
+          
+          <Button
+            title="Write Now"
+            variant="solid"
+            onPress={() => setShowCreateSheet(true)}
+            style={styles.writeButton}
+            icon={<MaterialCommunityIcons name="pencil" size={20} color="white" />}
           />
         </View>
+      </LinearGradient>
+      
+      <View style={styles.moodPreviewContainer}>
+        <Text style={styles.moodPreviewTitle}>Weekly Mood</Text>
+        <View style={styles.moodPreviewRow}>
+          {['Mon', 'Tue', 'Wed', 'Thu', 'Today'].map((day, index) => {
+            const mood = day === 'Wed' ? 'happy' : 'neutral';
+            const hasEntries = day === 'Wed';
+            return (
+              <View key={day} style={styles.moodPreviewDay}>
+                <View 
+                  style={[styles.moodPreviewIndicator, { 
+                    backgroundColor: hasEntries ? getMoodColor(mood) : '#e0e0e0',
+                    transform: [{ scale: hasEntries ? 1 : 0.8 }]
+                  }]}
+                >
+                  {hasEntries && renderMoodEmoji(mood)}
+                </View>
+                <Text style={styles.moodPreviewDayText}>{day}</Text>
+              </View>
+            );
+          })}
+        </View>
       </View>
-      <ScrollView 
-        style={styles.container}
-        contentContainerStyle={styles.scrollContainer}
+    </Animated.View>
+  );
+  
+  return (
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <StatusBar style="light" />
+      
+      <AnimatedFlatList
+        data={filteredEntries as JournalEntry[]}
+        renderItem={renderJournalEntry}
+        keyExtractor={(item: JournalEntry) => item.id}
+        contentContainerStyle={styles.listContainer}
+        showsVerticalScrollIndicator={false}
+        ListHeaderComponent={renderHeader}
+        ListEmptyComponent={!loading ? EmptyList : null}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={handleRefresh}
             colors={[theme.colors.primary]}
+            progressBackgroundColor="white"
           />
         }
-      >
-        {/* Today's Prompt Card */}
-        <View style={styles.section}>
-          <Card style={styles.todayCard}>
-            <Card.Content>
-              <Text style={styles.todayTitle}>Today's Reflection</Text>
-              <Text style={styles.promptText}>"{todayPrompt}"</Text>
-              <Button 
-                mode="contained" 
-                icon="pencil" 
-                onPress={() => {
-                  setCurrentMood('neutral');
-                  setShowCreateSheet(true);
-                }}
-                style={styles.startWritingButton}
-              >
-                Start Writing
-              </Button>
-            </Card.Content>
-          </Card>
-        </View>
-        
-        {/* Mood Timeline Section */}
-        <View style={styles.section}>
-          <Card style={styles.moodCard}>
-            <Card.Content>
-              <Text style={styles.moodTitle}>Mood Timeline</Text>
-              <View style={styles.moodTimeline}>
-                {weekdayMoods.map((item, index) => (
-                  <View key={item.day} style={styles.moodDay}>
-                    <View style={[styles.moodEmoji, item.day === 'Wed' ? styles.activeMoodDay : null]}>
-                      {renderMoodEmoji(item.mood)}
-                      {item.day === 'Wed' && <View style={styles.entryDot} />}
-                    </View>
-                    <Text style={[styles.dayText, item.day === 'Today' ? styles.todayText : null]}>
-                      {item.day}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            </Card.Content>
-          </Card>
-        </View>
-        
-        {/* Recent Entries Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Recent Entries</Text>
-            <Button mode="text" onPress={() => {}}>View All</Button>
-          </View>
-          
-          {/* Tag Filter */}
-          <ScrollView 
-            horizontal 
-            showsHorizontalScrollIndicator={false} 
-            style={styles.tagFilterContainer}
-            contentContainerStyle={styles.tagFilterContent}
-          >
-            {selectedTags.length > 0 && (
-              <Chip 
-                mode="outlined" 
-                onPress={() => setSelectedTags([])} 
-                style={styles.clearFilterChip}
-                closeIcon="close-circle"
-                onClose={() => setSelectedTags([])}
-              >
-                Clear filters
-              </Chip>
-            )}
-            
-            {(showAllTags ? allTags : allTags.slice(0, 5)).map(tag => (
-              <Chip
-                key={tag}
-                mode={selectedTags.includes(tag) ? "flat" : "outlined"}
-                selected={selectedTags.includes(tag)}
-                onPress={() => {
-                  if (selectedTags.includes(tag)) {
-                    setSelectedTags(selectedTags.filter(t => t !== tag));
-                  } else {
-                    setSelectedTags([...selectedTags, tag]);
-                  }
-                }}
-                style={styles.filterChip}
-              >
-                {tag}
-              </Chip>
-            ))}
-            
-            {allTags.length > 5 && (
-              <Chip
-                mode="outlined"
-                onPress={() => setShowAllTags(!showAllTags)}
-                style={styles.moreTagsChip}
-                icon={showAllTags ? "chevron-up" : "chevron-down"}
-              >
-                {showAllTags ? "Less" : `+${allTags.length - 5} more`}
-              </Chip>
-            )}
-          </ScrollView>
-          
-          {loading ? (
-            <ActivityIndicator size="large" color={theme.colors.primary} style={{ marginTop: 20 }} />
-          ) : filteredEntries.length === 0 ? (
-            <Card>
-              <Card.Content style={styles.emptyEntriesContent}>
-                {entries.length === 0 ? (
-                  <>
-                    <Avatar.Icon size={60} icon="book-open-variant" style={styles.emptyIcon} />
-                    <Text style={styles.emptyText}>No entries yet</Text>
-                    <Text style={styles.emptySubtext}>Start writing to see your entries here</Text>
-                  </>
-                ) : (
-                  <>
-                    <Avatar.Icon size={60} icon="filter-variant-remove" style={styles.emptyIcon} />
-                    <Text style={styles.emptyText}>No matching entries</Text>
-                    <Text style={styles.emptySubtext}>Try different tag filters</Text>
-                  </>
-                )}
-              </Card.Content>
-            </Card>
-          ) : (
-            filteredEntries.slice(0, 4).map(entry => (
-              <Card 
-                key={entry.id} 
-                style={styles.entryItem}
-                onPress={() => {
-                  setSelectedEntry(entry);
-                  setShowEditSheet(true);
-                }}
-              >
-                <Card.Content>
-                  <View style={styles.entryHeader}>
-                    <Text style={styles.entryDate}>
-                      {format(new Date(entry.created_at), 'MMMM d, yyyy')}
-                    </Text>
-                    <Chip compact icon="emoticon" style={{backgroundColor: theme.colors.surfaceVariant}}>{entry.mood}</Chip>
-                  </View>
-                  <Text style={styles.entryTitle} numberOfLines={1}>
-                    {entry.title || entry.content.split('\n')[0]}
-                  </Text>
-                  <Text style={styles.entryContent} numberOfLines={2}>
-                    {entry.content.replace(/<[^>]*>?/gm, '').substring(0, 120)}
-                    {entry.content.length > 120 ? '...' : ''}
-                  </Text>
-                </Card.Content>
-              </Card>
-            ))
-          )}
-        </View>
-      </ScrollView>
+      />
+      
+      {/* Floating action button */}
+      <Animated.View style={[styles.fabContainer, fabAnimatedStyle]}>
+        <LinearGradient
+          colors={['#4568dc', '#b06ab3']}
+          style={styles.fabGradient}
+        >
+          <MaterialCommunityIcons 
+            name="pencil" 
+            size={24} 
+            color="white" 
+            onPress={handleFabPress}
+          />
+        </LinearGradient>
+      </Animated.View>
+      
+      {/* Sheets and modals */}
+      <CreateEntrySheet
+        visible={showCreateSheet}
+        onDismiss={() => setShowCreateSheet(false)}
+        onSubmit={handleCreateEntry}
+        entryType="on_demand"
+        initialTags={[]}
+      />
+      
+      <EditEntrySheet
+        visible={showEditSheet}
+        onDismiss={() => {
+          setShowEditSheet(false);
+          setSelectedEntry(null);
+        }}
+        entry={selectedEntry}
+        onSubmit={handleUpdateEntry}
+        onDelete={() => selectedEntry && handleDeleteEntry(selectedEntry.id)}
+      />
+      
+      <MoodPicker
+        visible={showMoodPicker}
+        onDismiss={() => setShowMoodPicker(false)}
+        onSelectMood={setCurrentMood}
+        initialMood={currentMood}
+      />
+      
+      <PhysicalJournalCapture
+        visible={showPhysicalCapture}
+        onDismiss={() => setShowPhysicalCapture(false)}
+        onClose={() => setShowPhysicalCapture(false)}
+        onTextRecognized={(text) => {
+          if (selectedEntry) {
+            handleUpdateEntry(selectedEntry.id, {
+              ...selectedEntry,
+              content: selectedEntry.content + '\n\n' + text,
+            });
+          }
+        }}
+      />
       
       <Portal>
-        <CreateEntrySheet
-          visible={showCreateSheet}
-          onDismiss={() => setShowCreateSheet(false)}
-          onSubmit={handleCreateEntry}
-        />
-        
-        {selectedEntry && (
-          <EditEntrySheet
-            visible={showEditSheet}
-            onDismiss={() => {
-              setShowEditSheet(false);
-              setSelectedEntry(null);
-            }}
-            entry={selectedEntry}
-            onSubmit={handleUpdateEntry}
-            onDelete={() => selectedEntry && handleDeleteEntry(selectedEntry.id)}
-          />
-        )}
-        
-        <MoodPicker
-          visible={showMoodPicker}
-          onDismiss={() => setShowMoodPicker(false)}
-          initialMood={currentMood}
-          onSelectMood={(mood) => {
-            setCurrentMood(mood);
-            setShowMoodPicker(false);
-          }}
-        />
-        
-        <PhysicalJournalCapture
-          visible={showPhysicalCapture}
-          onClose={() => setShowPhysicalCapture(false)}
-          onDismiss={() => setShowPhysicalCapture(false)}
-          onTextRecognized={() => {}}
-          onCapture={(content) => {
-            handleCreateEntry({
-              content,
-              mood: currentMood,
-              tags: [],
-              entry_type: 'on_demand'
-            });
-            setShowPhysicalCapture(false);
-          }}
-        />
-        
-        <FAB.Group
-          open={fabOpen}
-          visible
-          icon={fabOpen ? 'close' : 'plus'}
-          actions={[
-            {
-              icon: 'text-box-plus',
-              label: 'New Entry',
-              onPress: () => {
-                setCurrentMood('neutral');
-                setShowCreateSheet(true);
-              },
-            },
-            {
-              icon: 'emoticon-outline',
-              label: 'Log Mood',
-              onPress: () => setShowMoodPicker(true),
-            },
-            {
-              icon: 'camera',
-              label: 'Capture Journal',
-              onPress: () => setShowPhysicalCapture(true),
-            },
-          ]}
-          onStateChange={({ open }) => setFabOpen(open)}
-          onPress={() => {
-            if (fabOpen) {
-              // Close FAB menu
-            }
-          }}
-          style={styles.fab}
-        />
-        
         <Snackbar
           visible={showSnackbar}
-          onDismiss={() => setShowSnackbar(false)}
           duration={3000}
+          onDismiss={() => setShowSnackbar(false)}
           style={styles.snackbar}
         >
           {snackbarMessage}
@@ -432,190 +435,219 @@ export default function JournalScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#f8f8f8',
   },
-  scrollContainer: {
-    flexGrow: 1,
-    paddingBottom: 100, // Provide enough padding for the FAB
+  listContainer: {
+    paddingBottom: 90,
   },
-  headerButtons: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  headerContainer: {
+    overflow: 'hidden',
+    marginBottom: 20,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: StatusBarHeight + 8,
-    paddingBottom: 12,
+  headerGradient: {
+    padding: 24,
+    paddingBottom: 40,
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#764094', // Purple theme
+  headerContent: {
+    width: '100%',
   },
-  sectionHeader: {
-    flexDirection: 'row',
+  headerTopRow: {
+    flexDirection: 'row', 
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
-    marginTop: 8,
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    marginBottom: 20,
   },
-  sectionTitle: {
-    fontSize: 18,
+  headerTitle: {
+    fontSize: 28,
     fontWeight: 'bold',
+    color: 'white',
   },
-  section: {
-    marginBottom: 16,
-    paddingHorizontal: 16,
-  },
-  tagFilterContainer: {
-    marginBottom: 16,
-  },
-  tagFilterContent: {
-    paddingRight: 16,
-  },
-  filterChip: {
-    marginRight: 8,
-    marginBottom: 8,
-  },
-  clearFilterChip: {
-    marginRight: 8,
-    borderColor: 'rgba(199, 57, 75, 0.5)',
-    backgroundColor: 'rgba(199, 57, 75, 0.1)',
-  },
-  moreTagsChip: {
-    marginRight: 8,
-    borderStyle: 'dashed',
-  },
-  todayCard: {
-    borderRadius: 16,
-    marginTop: 8,
-  },
-  todayTitle: {
+  headerPrompt: {
     fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 8,
-    color: '#764094',
-  },
-  promptText: {
-    fontSize: 16,
-    fontStyle: 'italic',
-    marginBottom: 16,
+    color: 'white',
     lineHeight: 24,
+    fontStyle: 'italic',
+    marginBottom: 20,
   },
-  startWritingButton: {
-    borderRadius: 24,
-    marginTop: 8,
+  writeButton: {
     alignSelf: 'flex-start',
+    borderRadius: 8,
   },
-  moodCard: {
+  moodPreviewContainer: {
+    backgroundColor: 'white',
+    margin: 16,
+    marginTop: -20,
     borderRadius: 16,
+    padding: 16,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
   },
-  moodTitle: {
-    fontSize: 18,
+  moodPreviewTitle: {
+    fontSize: 16,
     fontWeight: 'bold',
-    marginBottom: 16,
-    color: '#764094',
+    marginBottom: 12,
+    color: '#333',
   },
-  moodTimeline: {
+  moodPreviewRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  moodDay: {
     alignItems: 'center',
-    width: 45,
   },
-  moodEmoji: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#f5f5f5',
+  moodPreviewDay: {
+    alignItems: 'center',
+  },
+  moodPreviewIndicator: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 4,
-    fontSize: 20,
   },
-  activeMoodDay: {
-    backgroundColor: 'rgba(118, 64, 148, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(118, 64, 148, 0.3)',
-  },
-  entryDot: {
-    position: 'absolute',
-    bottom: -2,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#764094',
-  },
-  dayText: {
+  moodPreviewDayText: {
     fontSize: 12,
-    color: '#666',
+    color: '#777',
   },
-  todayText: {
-    fontWeight: 'bold',
-    color: '#764094',
+  entryContainer: {
+    marginHorizontal: 16,
+    marginBottom: 16,
   },
-  entryItem: {
-    marginBottom: 12,
-    borderRadius: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: '#764094',
+  entryCard: {
+    borderRadius: 16,
+    overflow: 'hidden',
   },
   entryHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 12,
+  },
+  entryMoodContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  moodIndicator: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 8,
   },
   entryDate: {
-    fontSize: 12,
-    color: '#666',
+    fontSize: 14,
+    color: '#777',
   },
   entryTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 4,
-    color: '#333',
-  },
-  entryContent: {
-    fontSize: 14,
-    color: '#666',
-    lineHeight: 20,
-  },
-  emptyEntriesContent: {
-    alignItems: 'center',
-    padding: 24,
-  },
-  emptyIcon: {
-    backgroundColor: 'rgba(118, 64, 148, 0.1)',
-    marginBottom: 16,
-  },
-  emptyText: {
     fontSize: 18,
     fontWeight: 'bold',
     marginBottom: 8,
+    color: '#333',
   },
-  emptySubtext: {
-    fontSize: 14,
+  entryContent: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#444',
+    marginBottom: 12,
+  },
+  entryImage: {
+    width: '100%',
+    height: 180,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  tagsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 8,
+  },
+  tagChip: {
+    backgroundColor: '#f0f0f0',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 16,
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  tagText: {
+    fontSize: 12,
     color: '#666',
-    textAlign: 'center',
   },
-  fab: {
+  moreTagsText: {
+    fontSize: 12,
+    color: '#666',
+    alignSelf: 'center',
+  },
+  moodEmoji: {
+    fontSize: 16,
+  },
+  fabContainer: {
     position: 'absolute',
-    margin: 16,
-    right: 0,
-    bottom: 0,
+    right: 24,
+    bottom: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    overflow: 'hidden',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+  },
+  fabGradient: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   snackbar: {
-    marginBottom: 100,
+    bottom: 16,
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    padding: 24,
+    marginTop: 32,
+  },
+  emptyImageContainer: {
+    width: width * 0.6,
+    height: width * 0.6,
+    borderRadius: width * 0.3,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  emptyImageGradient: {
+    width: '100%',
+    height: '100%',
+    borderRadius: width * 0.3,
+  },
+  emptyTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    marginBottom: 12,
+    color: '#333',
+  },
+  emptyText: {
+    fontSize: 16,
+    textAlign: 'center',
+    color: '#666',
+    marginBottom: 24,
+    lineHeight: 24,
+  },
+  emptyButton: {
+    paddingHorizontal: 32,
+  },
+  placeholderIcon: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: [{ translateX: -12 }, { translateY: -12 }],
   },
 });
+
+export default JournalScreen;
+
